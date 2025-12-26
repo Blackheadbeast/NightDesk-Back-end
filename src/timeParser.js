@@ -1,168 +1,147 @@
 import { DateTime } from "luxon";
 
-const TZ = process.env.BUSINESS_TIMEZONE || "America/Denver";
-
-const ORDINALS = [
-  ["first", 1], ["second", 2], ["third", 3], ["fourth", 4], ["fifth", 5],
-  ["sixth", 6], ["seventh", 7], ["eighth", 8], ["ninth", 9], ["tenth", 10],
-  ["eleventh", 11], ["twelfth", 12], ["thirteenth", 13], ["fourteenth", 14],
-  ["fifteenth", 15], ["sixteenth", 16], ["seventeenth", 17], ["eighteenth", 18],
-  ["nineteenth", 19], ["twentieth", 20], ["twenty first", 21], ["twenty-first", 21],
-  ["twenty second", 22], ["twenty-second", 22], ["twenty third", 23], ["twenty-third", 23],
-  ["twenty fourth", 24], ["twenty-fourth", 24], ["twenty fifth", 25], ["twenty-fifth", 25],
-  ["twenty sixth", 26], ["twenty-sixth", 26], ["twenty seventh", 27], ["twenty-seventh", 27],
-  ["twenty eighth", 28], ["twenty-eighth", 28], ["twenty ninth", 29], ["twenty-ninth", 29],
-  ["thirtieth", 30], ["thirty first", 31], ["thirty-first", 31],
-];
-
-function normalize(s) {
+// Helpers
+function clean(s) {
   return (s || "")
     .toLowerCase()
-    .replace(/[,]/g, " ")
+    .replace(/[\.,]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function stripOrdSuffix(s) {
-  // 26th -> 26
-  return s.replace(/(\d+)(st|nd|rd|th)\b/g, "$1");
+function stripOrdinals(s) {
+  return s.replace(/\b(\d{1,2})(st|nd|rd|th)\b/g, "$1");
 }
 
-function parseSpokenDayNumber(text) {
-  const t = normalize(text);
-  for (const [phrase, num] of ORDINALS) {
-    if (t.includes(phrase)) return num;
-  }
-  return null;
-}
+function parseTimeText(timeText) {
+  // returns {hour, minute} or null
+  const t = clean(timeText);
 
-function parseDay(dayText) {
-  const now = DateTime.now().setZone(TZ).startOf("day");
-  if (!dayText) return null;
-
-  let d = normalize(dayText);
-  d = stripOrdSuffix(d);
-
-  if (d === "today") return now;
-  if (d === "tomorrow") return now.plus({ days: 1 });
-
-  // weekdays
-  const weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
-  const w = weekdays.indexOf(d);
-  if (w !== -1) {
-    const todayIdx = now.weekday - 1; // Mon=1..Sun=7
-    let delta = w - todayIdx;
-    if (delta <= 0) delta += 7;
-    return now.plus({ days: delta });
+  // 17:30 or 17:00
+  let m = t.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (m) {
+    const hour = Number(m[1]);
+    const minute = Number(m[2]);
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) return { hour, minute };
   }
 
-  // mm/dd or mm-dd (assume current year)
-  const mdy = d.match(/^(\d{1,2})[\/\-](\d{1,2})$/);
-  if (mdy) {
-    const month = Number(mdy[1]);
-    const day = Number(mdy[2]);
-    const dt = DateTime.fromObject({ year: now.year, month, day }, { zone: TZ }).startOf("day");
-    return dt.isValid ? dt : null;
-  }
-
-  // "dec 26" / "december 26"
-  const monthDayNum = d.match(/^([a-z]+)\s+(\d{1,2})$/);
-  if (monthDayNum) {
-    const monthName = monthDayNum[1];
-    const day = Number(monthDayNum[2]);
-
-    let dt = DateTime.fromFormat(`${monthName} ${day} ${now.year}`, "LLLL d yyyy", { zone: TZ });
-    if (!dt.isValid) dt = DateTime.fromFormat(`${monthName} ${day} ${now.year}`, "LLL d yyyy", { zone: TZ });
-    return dt.isValid ? dt.startOf("day") : null;
-  }
-
-  // "december twenty sixth"
-  const monthSpoken = d.match(/^([a-z]+)\s+(.+)$/);
-  if (monthSpoken) {
-    const monthName = monthSpoken[1];
-    const rest = monthSpoken[2];
-    const dayNum = parseSpokenDayNumber(rest);
-    if (dayNum) {
-      let dt = DateTime.fromFormat(`${monthName} ${dayNum} ${now.year}`, "LLLL d yyyy", { zone: TZ });
-      if (!dt.isValid) dt = DateTime.fromFormat(`${monthName} ${dayNum} ${now.year}`, "LLL d yyyy", { zone: TZ });
-      return dt.isValid ? dt.startOf("day") : null;
-    }
-  }
-
-  return null;
-}
-
-function parseTime(timeText) {
-  if (!timeText) return null;
-
-  let t = normalize(timeText);
-
-  // remove filler words
-  t = t.replace(/\b(at|for|around)\b/g, " ").replace(/\s+/g, " ").trim();
-
-  // handle "2 p m" -> "2pm"
-  t = t.replace(/\b(a m|a\.m\.|am)\b/g, "am").replace(/\b(p m|p\.m\.|pm)\b/g, "pm");
-  t = t.replace(/\s+/g, "");
-  t = stripOrdSuffix(t);
-
-  // 14:30
-  if (/^\d{1,2}:\d{2}$/.test(t)) {
-    const [h, m] = t.split(":").map(Number);
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return { hour: h, minute: m };
-    return null;
-  }
-
-  // 2:30pm
-  const ampmColon = t.match(/^(\d{1,2}):(\d{2})(am|pm)$/);
-  if (ampmColon) {
-    let hour = Number(ampmColon[1]);
-    const minute = Number(ampmColon[2]);
-    const mer = ampmColon[3];
-    if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
-    if (mer === "am") {
-      if (hour === 12) hour = 0;
-    } else {
-      if (hour !== 12) hour += 12;
-    }
-    return { hour, minute };
-  }
-
-  // 2pm / 12am
-  const ampm = t.match(/^(\d{1,2})(am|pm)$/);
-  if (ampm) {
-    let hour = Number(ampm[1]);
-    const mer = ampm[2];
+  // 5pm / 5 pm / 12am / 12 am
+  m = t.match(/\b(\d{1,2})\s*(am|pm)\b/);
+  if (m) {
+    let hour = Number(m[1]);
+    const ampm = m[2];
     if (hour < 1 || hour > 12) return null;
-    if (mer === "am") {
-      if (hour === 12) hour = 0;
-    } else {
-      if (hour !== 12) hour += 12;
-    }
+    if (ampm === "am") hour = hour === 12 ? 0 : hour;
+    if (ampm === "pm") hour = hour === 12 ? 12 : hour + 12;
     return { hour, minute: 0 };
   }
 
-  // 14
-  if (/^\d{1,2}$/.test(t)) {
-    const h = Number(t);
-    if (h >= 0 && h <= 23) return { hour: h, minute: 0 };
+  // "5" (last resort) -> assume 5pm? (dangerous)
+  // We'll avoid guessing; return null so we ask again.
+  return null;
+}
+
+function nextWeekday(base, weekday) {
+  // weekday: 1=Mon ... 7=Sun
+  const delta = (weekday + 7 - base.weekday) % 7;
+  return base.plus({ days: delta === 0 ? 7 : delta });
+}
+
+function parseDayText(dayText, tz) {
+  // returns a DateTime (date only) or null
+  let d = clean(dayText);
+  d = stripOrdinals(d);
+
+  const now = DateTime.now().setZone(tz);
+  const today = now.startOf("day");
+
+  if (!d || d === "today") return today;
+  if (d === "tomorrow") return today.plus({ days: 1 });
+
+  // next monday / monday
+  const weekdays = {
+    monday: 1, mon: 1,
+    tuesday: 2, tue: 2, tues: 2,
+    wednesday: 3, wed: 3,
+    thursday: 4, thu: 4, thurs: 4,
+    friday: 5, fri: 5,
+    saturday: 6, sat: 6,
+    sunday: 7, sun: 7,
+  };
+
+  // "next monday"
+  let m = d.match(/\bnext\s+(monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat|sunday|sun)\b/);
+  if (m) {
+    const wd = weekdays[m[1]];
+    return nextWeekday(today, wd);
+  }
+
+  // plain weekday "monday"
+  m = d.match(/\b(monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat|sunday|sun)\b/);
+  if (m) {
+    const wd = weekdays[m[1]];
+    // choose next occurrence INCLUDING today if later time is handled elsewhere; safest: if weekday==today, keep today
+    const delta = (wd + 7 - today.weekday) % 7;
+    return today.plus({ days: delta });
+  }
+
+  // ISO date 2026-01-04
+  const iso = DateTime.fromISO(d, { zone: tz });
+  if (iso.isValid) return iso.startOf("day");
+
+  // numeric dates: 1/4 or 01/04 (assume US M/D)
+  const fmtMDY = [
+    "M/d",
+    "MM/dd",
+    "M/d/yy",
+    "MM/dd/yy",
+    "M/d/yyyy",
+    "MM/dd/yyyy",
+  ];
+  for (const f of fmtMDY) {
+    const dt = DateTime.fromFormat(d, f, { zone: tz });
+    if (dt.isValid) {
+      let candidate = dt.startOf("day");
+      // If no year was provided, Luxon may default current year; ensure future if already passed
+      if (!d.match(/\b\d{4}\b/) && candidate < today) {
+        candidate = candidate.plus({ years: 1 });
+      }
+      return candidate;
+    }
+  }
+
+  // month name: "january 4", "jan 4"
+  const fmtMonth = ["LLLL d", "LLL d", "LLLL d yyyy", "LLL d yyyy"];
+  for (const f of fmtMonth) {
+    const dt = DateTime.fromFormat(d, f, { zone: tz });
+    if (dt.isValid) {
+      let candidate = dt.startOf("day");
+      if (!d.match(/\b\d{4}\b/) && candidate < today) {
+        candidate = candidate.plus({ years: 1 });
+      }
+      return candidate;
+    }
   }
 
   return null;
 }
 
 export function buildBookingISO({ dayText, timeText, durationMins }) {
-  const day = parseDay(dayText);
-  const time = parseTime(timeText);
+  const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
-  if (!day || !time) return null;
+  const date = parseDayText(dayText, tz);
+  const time = parseTimeText(timeText);
 
-  const start = day.set({ hour: time.hour, minute: time.minute, second: 0, millisecond: 0 });
+  if (!date || !time) return null;
+
+  const start = date.set({ hour: time.hour, minute: time.minute }).setZone(tz);
+
   if (!start.isValid) return null;
 
-  const end = start.plus({ minutes: durationMins || 30 });
+  const end = start.plus({ minutes: Number(durationMins || 30) });
 
   return {
-    startISO: start.toISO(),
-    endISO: end.toISO(),
+    startISO: start.toISO({ suppressMilliseconds: true }),
+    endISO: end.toISO({ suppressMilliseconds: true }),
   };
 }
