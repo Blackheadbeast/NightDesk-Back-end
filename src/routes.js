@@ -5,6 +5,7 @@ import { twimlMessage } from "./twilio.js";
 import { getCallMemory, addCallMemory } from "./callStore.js";
 import { voiceResponse, voiceHangup } from "./voice.js";
 import { buildBookingISO } from "./timeParser.js";
+import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
 import {
   getAuthUrl,
   setTokensFromCode,
@@ -13,11 +14,6 @@ import {
 } from "./calendar.js";
 
 const router = express.Router();
-
-/** ✅ Task 1: TwiML safety wrapper (Twilio always gets valid XML + 200) */
-function sendTwiml(res, xml) {
-  res.status(200).type("text/xml").send(xml);
-}
 
 // ---- CONFIG / CONSTANTS ----
 const businessProfile = {
@@ -159,12 +155,9 @@ router.post("/webhook/sms", async (req, res) => {
       ai.booking?.name
     ) {
       if (!isGoogleConnected()) {
-        sendTwiml(
-          res,
-          twimlMessage(
-            "I can’t book yet because the calendar isn’t connected."
-          )
-        );
+        res
+          .type("text/xml")
+          .send(twimlMessage("I can’t book yet because the calendar isn’t connected."));
         return;
       }
 
@@ -176,12 +169,13 @@ router.post("/webhook/sms", async (req, res) => {
       });
 
       if (!iso) {
-        sendTwiml(
-          res,
-          twimlMessage(
-            'Got it — what exact date and time should I book? (Example: "January 4 at 5pm")'
-          )
-        );
+        res
+          .type("text/xml")
+          .send(
+            twimlMessage(
+              'Got it — what exact date and time should I book? (Example: "January 4 at 5pm")'
+            )
+          );
         return;
       }
 
@@ -195,15 +189,14 @@ router.post("/webhook/sms", async (req, res) => {
         });
       }
 
-      sendTwiml(res, twimlMessage("✅ Perfect — your appointment is booked."));
+      res.type("text/xml").send(twimlMessage("✅ Perfect — your appointment is booked."));
       return;
     }
 
-    sendTwiml(res, twimlMessage(ai.reply || "Okay."));
+    res.type("text/xml").send(twimlMessage(ai.reply || "Okay."));
   } catch (e) {
     console.log("❌ SMS error:", e.message);
-    sendTwiml(
-      res,
+    res.type("text/xml").send(
       twimlMessage("Sorry — I’m having trouble right now. Please try again.")
     );
   }
@@ -220,17 +213,19 @@ router.post("/webhook/voice", async (req, res) => {
     // reset per-call state
     awaitingExactDateTime.delete(callSid);
     parseAttempts.delete(callSid);
+    bookedCall.delete(callSid);
+    clearSlots(callSid);
 
-    const twiml = voiceResponse({
-      sayText: "Hi! Thanks for calling. I can help you book an appointment.",
-      gatherAction: "/webhook/voice/continue",
-      gatherPrompt: "What can I help you with?",
-    });
-
-    sendTwiml(res, twiml);
+    res.type("text/xml").send(
+      voiceResponse({
+        sayText: "Hi! Thanks for calling. I can help you book an appointment.",
+        gatherAction: "/webhook/voice/continue",
+        gatherPrompt: "What can I help you with?",
+      })
+    );
   } catch (e) {
     console.log("❌ /webhook/voice error:", e.message);
-    sendTwiml(res, voiceHangup("Sorry, something went wrong."));
+    res.type("text/xml").send(voiceHangup("Sorry, something went wrong."));
   }
 });
 
@@ -243,24 +238,9 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
     console.log("🗣️ Speech:", speech, "🔢 Digits:", digit);
 
-        // 🛡️ HARDENING: Handle blank / malformed Twilio posts safely
-    // (prevents random "Application Error")
-    if (!speech && !digit) {
-      sendTwiml(
-        res,
-        voiceResponse({
-          sayText: "Hi — one more time.",
-          gatherAction: "/webhook/voice/continue",
-          gatherPrompt: "What can I help you with?",
-        })
-      );
-      return;
-    }
-
     // Trial “press any key”
     if (digit && !speech) {
-      sendTwiml(
-        res,
+      res.type("text/xml").send(
         voiceResponse({
           sayText: "Go ahead.",
           gatherAction: "/webhook/voice/continue",
@@ -275,13 +255,12 @@ router.post("/webhook/voice/continue", async (req, res) => {
       const endText = bookedCall.has(callSid)
         ? "Perfect. See you then. Goodbye!"
         : "No problem. Goodbye!";
-      sendTwiml(res, voiceHangup(endText));
+      res.type("text/xml").send(voiceHangup(endText));
       return;
     }
 
     if (!speech) {
-      sendTwiml(
-        res,
+      res.type("text/xml").send(
         voiceResponse({
           sayText: "Sorry, I didn’t catch that.",
           gatherAction: "/webhook/voice/continue",
@@ -292,18 +271,19 @@ router.post("/webhook/voice/continue", async (req, res) => {
     }
 
     const memory = getCallMemory(callSid);
+    addCallMemory(callSid, `Caller: ${speech}`);
 
-    // ---- CAPTURE MODE ----
+    // Current server-side slots (NEVER forget)
+    const currentSlots = getSlots(callSid);
+
+    // ---- CAPTURE MODE (only for exact date/time after parse fails) ----
     if (awaitingExactDateTime.has(callSid)) {
       const attempt = (parseAttempts.get(callSid) || 0) + 1;
       parseAttempts.set(callSid, attempt);
 
       const extracted = extractDayTimeFromSpeech(speech);
 
-      const lastServiceLine =
-        [...memory].reverse().find((l) => l.startsWith("LastService:")) || "";
-      const lastService = lastServiceLine.replace("LastService:", "").trim();
-      const durationMins = durationForService(lastService || "Haircut");
+      const durationMins = durationForService(currentSlots.service || "Haircut");
 
       let iso = null;
       if (extracted) {
@@ -315,8 +295,7 @@ router.post("/webhook/voice/continue", async (req, res) => {
       }
 
       if (!iso && attempt < 3) {
-        sendTwiml(
-          res,
+        res.type("text/xml").send(
           voiceResponse({
             sayText: 'Please say it like: "January 4 at 5 PM".',
             gatherAction: "/webhook/voice/continue",
@@ -329,27 +308,18 @@ router.post("/webhook/voice/continue", async (req, res) => {
       if (!iso && attempt >= 3) {
         awaitingExactDateTime.delete(callSid);
         parseAttempts.delete(callSid);
-        sendTwiml(
-          res,
-          voiceHangup(
-            "Sorry — I’m having trouble understanding. Please try again later."
-          )
-        );
+        res
+          .type("text/xml")
+          .send(voiceHangup("Sorry — I’m having trouble understanding. Please try again later."));
         return;
       }
 
-      // success -> book with stored name/service
+      // success -> clear capture mode and book
       awaitingExactDateTime.delete(callSid);
       parseAttempts.delete(callSid);
 
-      const lastNameLine =
-        [...memory].reverse().find((l) => l.startsWith("LastName:")) || "";
-      const name = lastNameLine.replace("LastName:", "").trim() || "Customer";
-      const service = lastService || "Haircut";
-
       if (!isGoogleConnected()) {
-        sendTwiml(
-          res,
+        res.type("text/xml").send(
           voiceResponse({
             sayText: "I can’t book yet because the calendar isn’t connected.",
             gatherAction: "/webhook/voice/continue",
@@ -361,8 +331,8 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
       if (!recentlyBooked(callSid)) {
         await createCalendarEvent({
-          name,
-          service,
+          name: currentSlots.name || "Customer",
+          service: currentSlots.service || "Haircut",
           startISO: iso.startISO,
           endISO: iso.endISO,
           phone: callSid,
@@ -371,8 +341,7 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
       bookedCall.add(callSid);
 
-      sendTwiml(
-        res,
+      res.type("text/xml").send(
         voiceResponse({
           sayText: "Perfect — your appointment is booked.",
           gatherAction: "/webhook/voice/continue",
@@ -383,8 +352,6 @@ router.post("/webhook/voice/continue", async (req, res) => {
     }
 
     // ---- NORMAL AI FLOW ----
-    addCallMemory(callSid, `Caller: ${speech}`);
-
     const ai = await receptionistVoiceReply({
       businessProfile,
       customerMessage: speech,
@@ -393,21 +360,36 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
     console.log("AI JSON:", ai);
 
-    // Book if AI has all fields (server computes ISO)
-    if (
-      ai.intent === "book" &&
-      ai.booking?.dayText &&
-      ai.booking?.timeText &&
-      ai.booking?.service &&
-      ai.booking?.name
-    ) {
-      // Store name/service for capture-mode fallback
-      addCallMemory(callSid, `LastName: ${ai.booking.name}`);
-      addCallMemory(callSid, `LastService: ${ai.booking.service}`);
+    // Merge AI slots into server slots (never overwrite with empty)
+    const merged = mergeSlots(callSid, ai.booking || {});
+    console.log("🧩 Merged slots:", merged);
 
+    const ready =
+      merged.name && merged.service && merged.dayText && merged.timeText;
+
+    // If we are in booking flow but missing info, ask deterministically (NOT AI)
+    if (ai.intent === "book" && !ready) {
+      let q = "One quick question—";
+      if (!merged.name) q += "what’s your name?";
+      else if (!merged.service)
+        q += "which service: Haircut, Beard trim, or Haircut+Beard?";
+      else if (!merged.dayText) q += "what day would you like?";
+      else if (!merged.timeText) q += "what time works for you?";
+
+      res.type("text/xml").send(
+        voiceResponse({
+          sayText: q,
+          gatherAction: "/webhook/voice/continue",
+          gatherPrompt: "",
+        })
+      );
+      return;
+    }
+
+    // If ready -> deterministic booking
+    if (ai.intent === "book" && ready) {
       if (!isGoogleConnected()) {
-        sendTwiml(
-          res,
+        res.type("text/xml").send(
           voiceResponse({
             sayText: "I can’t book yet because the calendar isn’t connected.",
             gatherAction: "/webhook/voice/continue",
@@ -417,10 +399,10 @@ router.post("/webhook/voice/continue", async (req, res) => {
         return;
       }
 
-      const durationMins = durationForService(ai.booking.service);
+      const durationMins = durationForService(merged.service);
       const iso = buildBookingISO({
-        dayText: ai.booking.dayText,
-        timeText: ai.booking.timeText,
+        dayText: merged.dayText,
+        timeText: merged.timeText,
         durationMins,
       });
 
@@ -429,11 +411,9 @@ router.post("/webhook/voice/continue", async (req, res) => {
         awaitingExactDateTime.add(callSid);
         parseAttempts.set(callSid, 0);
 
-        sendTwiml(
-          res,
+        res.type("text/xml").send(
           voiceResponse({
-            sayText:
-              'Got it — please say the exact date and time like: "January 4 at 5 PM".',
+            sayText: 'Got it — please say the exact date and time like: "January 4 at 5 PM".',
             gatherAction: "/webhook/voice/continue",
             gatherPrompt: "",
           })
@@ -443,8 +423,8 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
       if (!recentlyBooked(callSid)) {
         await createCalendarEvent({
-          name: ai.booking.name,
-          service: ai.booking.service,
+          name: merged.name,
+          service: merged.service,
           startISO: iso.startISO,
           endISO: iso.endISO,
           phone: callSid,
@@ -453,8 +433,7 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
       bookedCall.add(callSid);
 
-      sendTwiml(
-        res,
+      res.type("text/xml").send(
         voiceResponse({
           sayText: "Perfect — your appointment is booked.",
           gatherAction: "/webhook/voice/continue",
@@ -464,10 +443,10 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
+    // Non-booking intent -> just speak AI reply
     addCallMemory(callSid, `AI: ${ai.reply || ""}`);
 
-    sendTwiml(
-      res,
+    res.type("text/xml").send(
       voiceResponse({
         sayText: ai.reply || "Okay.",
         gatherAction: "/webhook/voice/continue",
@@ -476,8 +455,7 @@ router.post("/webhook/voice/continue", async (req, res) => {
     );
   } catch (e) {
     console.log("❌ Voice continue error:", e.message);
-    sendTwiml(
-      res,
+    res.type("text/xml").send(
       voiceResponse({
         sayText: "Sorry, I’m having trouble right now.",
         gatherAction: "/webhook/voice/continue",
