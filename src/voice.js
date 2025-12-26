@@ -20,12 +20,9 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     language: "en-US",
   });
 
-  if (gatherPrompt) {
-    gather.say({ voice: "alice" }, gatherPrompt);
-  }
-
-  // ✅ IMPORTANT: If nothing is captured, send them back to the main voice entry
-  vr.redirect({ method: "POST" }, `${BASE_URL}/webhook/voice`);
+  // If they say nothing, Twilio will still hit your actionUrl with empty SpeechResult.
+  // Your /webhook/voice/continue already handles empty speech and reprompts.
+  if (gatherPrompt) gather.say({ voice: "alice" }, gatherPrompt);
 
   return vr.toString();
 }
