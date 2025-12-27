@@ -24,4 +24,4 @@ app.use((err, _req, res, _next) => {
   console.error("Unhandled error:", err);
   res.status(500).send("Server error");
 });
-app.listen(port, () => console.log(`Server running on :${port}`));
+app.listen(port, "0.0.0.0", () => console.log(`Server running on :${port}`));

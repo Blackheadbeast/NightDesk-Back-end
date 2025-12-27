@@ -1,0 +1,5 @@
+{
+  "watch": ["src"],
+  "ignore": ["google_tokens.json", ".env", "*.log", ".DS_Store"],
+  "ext": "js,json"
+}
