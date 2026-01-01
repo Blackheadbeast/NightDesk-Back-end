@@ -372,6 +372,8 @@
 import express from "express";
 import { twimlMessage } from "./twilio.js";
 import { voiceResponse } from "./voice.js";
+import { getMemory, addToMemory } from "./store.js";
+import { getCallMemory, addCallMemory } from "./callStore.js";
 
 
 
@@ -392,10 +394,17 @@ router.get("/test-route", (_req, res) => {
 
 // SMS webhook placeholder
 router.post("/webhook/sms", (req, res) => {
+  const from = req.body.From || "test";
+  const body = req.body.Body || "";
+
+  const memory = getMemory(from);
+  addToMemory(from, body);
+
   res.type("text/xml").send(
-    twimlMessage("NightDesk SMS webhook working.")
+    twimlMessage("Memory store working.")
   );
 });
+
 
 
 // Voice webhook placeholder
