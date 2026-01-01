@@ -374,6 +374,8 @@ import { twimlMessage } from "./twilio.js";
 import { voiceResponse } from "./voice.js";
 import { getMemory, addToMemory } from "./store.js";
 import { getCallMemory, addCallMemory } from "./callStore.js";
+import { receptionistReply, receptionistVoiceReply } from "./ai.js";
+
 
 
 
@@ -393,17 +395,21 @@ router.get("/test-route", (_req, res) => {
 ================================ */
 
 // SMS webhook placeholder
-router.post("/webhook/sms", (req, res) => {
-  const from = req.body.From || "test";
-  const body = req.body.Body || "";
+router.post("/webhook/sms", async (req, res) => {
+  const from = req.body.From;
+  const body = req.body.Body;
 
-  const memory = getMemory(from);
-  addToMemory(from, body);
+  const ai = await receptionistReply({
+    businessProfile: { businessName: "NightDesk Demo" },
+    customerMessage: body,
+    memory: [],
+  });
 
   res.type("text/xml").send(
-    twimlMessage("Memory store working.")
+    twimlMessage(ai.reply || "AI working.")
   );
 });
+
 
 
 
