@@ -26,7 +26,7 @@ router.get("/auth/google", (_req, res) => {
 });
 
 // Google callback (STEP 2)
-router.get("/auth/google/callback", async (req, res) => {
+router.get("975774284219-i0ueohdef2tu74p14f3kev4rju6016tb.apps.googleusercontent.com", async (req, res) => {
   try {
     await setTokensFromCode(req.query.code);
     res.send("Google Calendar connected ✅ You can close this tab.");
