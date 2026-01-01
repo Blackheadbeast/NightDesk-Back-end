@@ -369,13 +369,31 @@
 
 // export default router;
 
-
 import express from "express";
+
+console.log("🔥 routes.js loaded");
 
 const router = express.Router();
 
+/* ================================
+   TEST ROUTE (DO NOT REMOVE)
+================================ */
 router.get("/test-route", (_req, res) => {
   res.json({ ok: true });
+});
+
+/* ================================
+   PLACEHOLDER ROUTES
+================================ */
+
+// SMS webhook placeholder
+router.post("/webhook/sms", (_req, res) => {
+  res.send("SMS placeholder");
+});
+
+// Voice webhook placeholder
+router.post("/webhook/voice", (_req, res) => {
+  res.send("Voice placeholder");
 });
 
 export default router;
