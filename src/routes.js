@@ -8,7 +8,6 @@ import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
 import { buildBookingISO } from "./timeParser.js";
 import { getAuthUrl, setTokensFromCode } from "./calendar.js";
 
-
 console.log("🔥 routes.js loaded");
 
 const router = express.Router();
@@ -20,22 +19,124 @@ router.get("/test-route", (_req, res) => {
   res.json({ ok: true });
 });
 
+/* ================================
+   GOOGLE CALENDAR OAUTH
+================================ */
+
 // Google Calendar connect (STEP 1)
 router.get("/auth/google", (_req, res) => {
-  res.redirect(getAuthUrl());
+  try {
+    const authUrl = getAuthUrl();
+    console.log("🔗 Redirecting to Google OAuth:", authUrl);
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error("❌ Error generating auth URL:", error);
+    res.status(500).send(`Error: ${error.message}. Check your environment variables.`);
+  }
 });
 
 // Google callback (STEP 2)
 router.get("/auth/google/callback", async (req, res) => {
   try {
-    await setTokensFromCode(req.query.code);
-    res.send("Google Calendar connected ✅ You can close this tab.");
+    const code = req.query.code;
+    const error = req.query.error;
+
+    // Handle user denial
+    if (error) {
+      console.log("❌ User denied access:", error);
+      return res.status(400).send("❌ Authorization denied. You cancelled the request.");
+    }
+
+    // Handle missing code
+    if (!code) {
+      console.log("❌ No authorization code received");
+      return res.status(400).send("❌ No authorization code received. Please try again.");
+    }
+
+    console.log("✅ Received authorization code, exchanging for tokens...");
+    await setTokensFromCode(code);
+    
+    console.log("✅ Google Calendar connected successfully!");
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Connected!</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+              background: white;
+              padding: 3rem;
+              border-radius: 1rem;
+              box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+              text-align: center;
+            }
+            h1 { color: #10b981; margin: 0 0 1rem 0; }
+            p { color: #6b7280; margin: 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>✅ Google Calendar Connected!</h1>
+            <p>You can close this tab now.</p>
+          </div>
+        </body>
+      </html>
+    `);
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Google auth failed");
+    console.error("❌ Google auth failed:", e);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Error</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
+            }
+            .container {
+              background: white;
+              padding: 3rem;
+              border-radius: 1rem;
+              box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+              text-align: center;
+              max-width: 500px;
+            }
+            h1 { color: #dc2626; margin: 0 0 1rem 0; }
+            p { color: #6b7280; margin: 0 0 0.5rem 0; }
+            code { 
+              background: #f3f4f6; 
+              padding: 0.25rem 0.5rem; 
+              border-radius: 0.25rem;
+              font-size: 0.875rem;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>❌ Authentication Failed</h1>
+            <p><strong>Error:</strong> <code>${e.message}</code></p>
+            <p style="margin-top: 1rem;">Please check your Google Cloud Console settings and try again.</p>
+          </div>
+        </body>
+      </html>
+    `);
   }
 });
-
 
 /* ================================
    HEALTH (OPTIONAL)
@@ -99,7 +200,6 @@ router.post("/webhook/sms", async (req, res) => {
   }
 });
 
-
 /* ================================
    VOICE ENTRY
 ================================ */
@@ -125,7 +225,7 @@ router.post("/webhook/voice/continue", async (req, res) => {
     if (!speech) {
       res.type("text/xml").send(
         voiceResponse({
-          sayText: "Sorry, I didn’t catch that. Could you repeat?",
+          sayText: "Sorry, I didn't catch that. Could you repeat?",
           gatherAction: "/api/webhook/voice/continue",
           gatherPrompt: "",
         })
