@@ -370,6 +370,8 @@
 // export default router;
 
 import express from "express";
+import { twimlMessage } from "./twilio.js";
+
 
 console.log("🔥 routes.js loaded");
 
@@ -387,9 +389,12 @@ router.get("/test-route", (_req, res) => {
 ================================ */
 
 // SMS webhook placeholder
-router.post("/webhook/sms", (_req, res) => {
-  res.send("SMS placeholder");
+router.post("/webhook/sms", (req, res) => {
+  res.type("text/xml").send(
+    twimlMessage("NightDesk SMS webhook working.")
+  );
 });
+
 
 // Voice webhook placeholder
 router.post("/webhook/voice", (_req, res) => {
