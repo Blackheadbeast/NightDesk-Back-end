@@ -6,6 +6,7 @@ import { getMemory, addToMemory } from "./store.js";
 import { getCallMemory, addCallMemory } from "./callStore.js";
 import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
 import { buildBookingISO } from "./timeParser.js";
+import { getAuthUrl, setTokensFromCode } from "./calendar.js";
 
 
 console.log("🔥 routes.js loaded");
@@ -17,6 +18,22 @@ const router = express.Router();
 ================================ */
 router.get("/test-route", (_req, res) => {
   res.json({ ok: true });
+});
+
+// Google Calendar connect (STEP 1)
+router.get("/auth/google", (_req, res) => {
+  res.redirect(getAuthUrl());
+});
+
+// Google callback (STEP 2)
+router.get("/auth/google/callback", async (req, res) => {
+  try {
+    await setTokensFromCode(req.query.code);
+    res.send("Google Calendar connected ✅ You can close this tab.");
+  } catch (e) {
+    console.error(e);
+    res.status(500).send("Google auth failed");
+  }
 });
 
 /* ================================

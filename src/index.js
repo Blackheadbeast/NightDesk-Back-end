@@ -9,6 +9,7 @@ app.use(cors());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+console.log("🔥 mounting routes");
 app.use("/api", routes);
 
 app.get("/health", (_req, res) => {
