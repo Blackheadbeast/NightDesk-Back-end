@@ -1,121 +1,38 @@
 import { google } from "googleapis";
-import fs from "fs";
-import path from "path";
 
-const TOKEN_PATH = path.join(process.cwd(), "google_tokens.json");
+let calendarClient = null;
 
-function requireEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is missing. Check .env loading.`);
-  return v;
-}
-
-const oAuth2Client = new google.auth.OAuth2(
-  requireEnv("GOOGLE_CLIENT_ID"),
-  requireEnv("GOOGLE_CLIENT_SECRET"),
-  requireEnv("GOOGLE_REDIRECT_URI")
-);
-
-// Auto-save refreshed tokens
-oAuth2Client.on("tokens", (tokens) => {
-  if (!tokens) return;
-
-  // Merge with existing tokens so refresh_token doesn't get lost
-  const existing = loadTokens() || {};
-  const merged = { ...existing, ...tokens };
+function getCalendarClient() {
+  if (calendarClient) return calendarClient;
 
   try {
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(merged, null, 2));
-    console.log("✅ Tokens refreshed and saved");
-  } catch (e) {
-    console.error("Failed saving refreshed tokens:", e.message);
-  }
-});
+    // Parse the service account key from environment variable
+    const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
 
-function loadTokens() {
-  if (fs.existsSync(TOKEN_PATH)) {
-    try {
-      const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
-      oAuth2Client.setCredentials(tokens);
-      console.log("✅ Loaded existing tokens");
-      return tokens;
-    } catch (e) {
-      console.error("Error loading tokens:", e.message);
-      return null;
-    }
-  }
-  return null;
-}
+    // Create auth client
+    const auth = new google.auth.GoogleAuth({
+      credentials: serviceAccountKey,
+      scopes: ["https://www.googleapis.com/auth/calendar.events"],
+    });
 
-function saveTokens(tokens) {
-  try {
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-    oAuth2Client.setCredentials(tokens);
-    console.log("✅ Tokens saved successfully");
-  } catch (e) {
-    console.error("Error saving tokens:", e.message);
-    throw e;
+    // Create calendar client
+    calendarClient = google.calendar({ version: "v3", auth });
+    
+    console.log("✅ Google Calendar client initialized");
+    return calendarClient;
+  } catch (error) {
+    console.error("❌ Error initializing Google Calendar:", error.message);
+    throw new Error("Failed to initialize Google Calendar");
   }
 }
 
 export function isGoogleConnected() {
-  const tokens = loadTokens();
-  return !!tokens;
-}
-
-export function getAuthUrl() {
-  const scopes = [
-    "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/calendar"
-  ];
-  
-  const authUrl = oAuth2Client.generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent",
-    scope: scopes,
-    redirect_uri: requireEnv("GOOGLE_REDIRECT_URI"),
-    // Add these for better compatibility
-    response_type: "code",
-    include_granted_scopes: true
-  });
-  
-  console.log("🔗 Generated auth URL:", authUrl);
-  return authUrl;
-}
-
-export async function setTokensFromCode(code) {
-  if (!code) {
-    throw new Error("Authorization code is required");
-  }
-  
-  console.log("🔄 Exchanging code for tokens...");
-  
-  try {
-    const { tokens } = await oAuth2Client.getToken({
-      code,
-      redirect_uri: requireEnv("GOOGLE_REDIRECT_URI")
-    });
-    
-    console.log("✅ Received tokens from Google");
-    saveTokens(tokens);
-    return tokens;
-  } catch (error) {
-    console.error("❌ Error getting tokens:", error.message);
-    throw new Error(`Failed to exchange authorization code: ${error.message}`);
-  }
-}
-
-function calendarClient() {
-  const tokens = loadTokens();
-  if (!tokens) {
-    throw new Error("Google Calendar not connected. Please authorize first.");
-  }
-  return google.calendar({ version: "v3", auth: oAuth2Client });
+  return !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
 }
 
 export async function createCalendarEvent({ name, service, startISO, endISO, phone }) {
   try {
-    const cal = calendarClient();
+    const calendar = getCalendarClient();
     const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
     const event = {
@@ -127,7 +44,7 @@ export async function createCalendarEvent({ name, service, startISO, endISO, pho
 
     console.log("📅 Creating calendar event:", event);
 
-    const res = await cal.events.insert({
+    const res = await calendar.events.insert({
       calendarId: process.env.GOOGLE_CALENDAR_ID || "primary",
       requestBody: event,
     });
@@ -140,26 +57,11 @@ export async function createCalendarEvent({ name, service, startISO, endISO, pho
   }
 }
 
-// Helper function to check if tokens are expired
-export function areTokensExpired() {
-  const tokens = loadTokens();
-  if (!tokens || !tokens.expiry_date) return true;
-  return tokens.expiry_date <= Date.now();
+// These functions are no longer needed but kept for backward compatibility
+export function getAuthUrl() {
+  throw new Error("OAuth not needed - using service account");
 }
 
-// Helper function to manually refresh tokens if needed
-export async function refreshTokensIfNeeded() {
-  if (areTokensExpired()) {
-    console.log("🔄 Tokens expired, refreshing...");
-    try {
-      const { credentials } = await oAuth2Client.refreshAccessToken();
-      saveTokens(credentials);
-      console.log("✅ Tokens refreshed successfully");
-      return credentials;
-    } catch (error) {
-      console.error("❌ Error refreshing tokens:", error.message);
-      throw error;
-    }
-  }
-  return loadTokens();
+export function setTokensFromCode() {
+  throw new Error("OAuth not needed - using service account");
 }
