@@ -4,6 +4,9 @@ import { voiceResponse, voiceHangup } from "./voice.js";
 import { receptionistReply, receptionistVoiceReply } from "./ai.js";
 import { getMemory, addToMemory } from "./store.js";
 import { getCallMemory, addCallMemory } from "./callStore.js";
+import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
+import { buildBookingISO } from "./timeParser.js";
+
 
 console.log("🔥 routes.js loaded");
 
@@ -28,7 +31,7 @@ router.get("/health", (_req, res) => {
 ================================ */
 router.post("/webhook/sms", async (req, res) => {
   try {
-    const from = req.body.From || "unknown";
+    const from = req.body.From; // phone number = session key
     const body = (req.body.Body || "").trim();
 
     const memory = getMemory(from);
@@ -44,18 +47,40 @@ router.post("/webhook/sms", async (req, res) => {
       memory,
     });
 
-    addToMemory(from, `AI: ${ai.reply}`);
+    // 🔑 merge extracted booking data
+    const merged = mergeSlots(from, ai.booking || {});
 
-    res.type("text/xml").send(
-      twimlMessage(ai.reply || "Thanks! We’ll get back to you shortly.")
-    );
+    let reply = ai.reply;
+
+    // Ask ONE missing thing only
+    if (ai.intent === "book") {
+      if (!merged.name) reply = "Great! What's your name?";
+      else if (!merged.service) reply = "Which service would you like?";
+      else if (!merged.dayText) reply = "What day works best?";
+      else if (!merged.timeText) reply = `What time on ${merged.dayText}?`;
+      else {
+        // All info collected → confirmation
+        reply = `Thanks ${merged.name}! You're booking a ${merged.service} on ${merged.dayText} at ${merged.timeText}. Reply YES to confirm.`;
+      }
+    }
+
+    // Final confirmation
+    if (/^yes$/i.test(body) && merged.dayText && merged.timeText) {
+      clearSlots(from);
+      reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}.`;
+    }
+
+    addToMemory(from, `AI: ${reply}`);
+
+    res.type("text/xml").send(twimlMessage(reply));
   } catch (err) {
-    console.error("SMS webhook error:", err);
+    console.error("SMS error:", err);
     res.type("text/xml").send(
       twimlMessage("Sorry, something went wrong. Please try again.")
     );
   }
 });
+
 
 /* ================================
    VOICE ENTRY
