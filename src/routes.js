@@ -371,6 +371,8 @@
 
 import express from "express";
 import { twimlMessage } from "./twilio.js";
+import { voiceResponse } from "./voice.js";
+
 
 
 console.log("🔥 routes.js loaded");
@@ -398,7 +400,14 @@ router.post("/webhook/sms", (req, res) => {
 
 // Voice webhook placeholder
 router.post("/webhook/voice", (_req, res) => {
-  res.send("Voice placeholder");
+  res.type("text/xml").send(
+    voiceResponse({
+      sayText: "NightDesk voice webhook working.",
+      gatherAction: "",
+      gatherPrompt: "",
+    })
+  );
 });
+
 
 export default router;
