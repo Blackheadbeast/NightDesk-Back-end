@@ -1,14 +1,6 @@
 import OpenAI from "openai";
 import { z } from "zod";
 
-/**
- * ✅ Hardening goals:
- * - OpenAI/API/network errors never crash the call
- * - Invalid / non-JSON model output never crashes the call
- * - Always returns a valid, predictable object shape
- * - Adds a timeout so calls don't hang forever
- */
-
 let client = null;
 
 function getClient() {
@@ -23,7 +15,6 @@ const BookingSchema = z
   .object({
     name: z.string().optional().default(""),
     service: z.string().optional().default(""),
-    // We now prefer deterministic parsing on server:
     dayText: z.string().optional().default(""),
     timeText: z.string().optional().default(""),
   })
@@ -40,18 +31,16 @@ const AIResponseSchema = z.object({
 function safeAIResponse(overrides = {}) {
   return {
     intent: "unknown",
-    reply: "Sorry — I’m having trouble right now. Please try again.",
+    reply: "Sorry — I'm having trouble right now. Please try again.",
     booking: null,
     ...overrides,
   };
 }
 
 function safeJsonParse(text) {
-  // Model *should* return JSON, but we still guard hard.
   try {
     return JSON.parse(text);
   } catch {
-    // Try to salvage if model wrapped JSON in text
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start !== -1 && end !== -1 && end > start) {
@@ -70,7 +59,6 @@ async function withTimeout(promise, ms, timeoutMessage = "OpenAI request timed o
   const t = setTimeout(() => ac.abort(), ms);
 
   try {
-    // Pass signal if the promise factory supports it (we'll use it below)
     const result = await promise(ac.signal);
     return result;
   } catch (e) {
@@ -85,31 +73,36 @@ function buildSystemPrompt(businessProfile, memory) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
   return `
-You are an AI receptionist for a small business.
+You are an AI receptionist for ${businessProfile.businessName}.
 
-Goals:
-- Be fast, natural, and brief.
-- Ask only ONE question at a time when needed.
-- Do NOT ramble or repeat yourself.
-- Never output anything except JSON.
+CRITICAL RULES:
+1. If you see "[Already collected: ...]" in the customer's message, DO NOT ask for that information again.
+2. Only ask for ONE missing piece of information at a time.
+3. Be conversational and natural, not robotic.
+4. Keep responses SHORT (1-2 sentences max).
+5. Extract booking info from the customer's words, even if they don't say it perfectly.
 
-Important:
-- The server will convert date/time into ISO.
-- You must provide booking.dayText and booking.timeText (human text) when ready to book.
-- If the customer says "tomorrow", interpret it relative to the business timezone (${tz}).
+Business info:
+- Services: ${businessProfile.services.join(", ")}
+- Hours: ${businessProfile.hours}
+- Location: ${businessProfile.location}
+- Timezone: ${tz}
 
 Booking requirements:
-- name
+- name (customer's name)
 - service (one of: "Haircut", "Beard trim", "Haircut+Beard")
-- dayText (ex: "tomorrow", "January 4", "12/25")
-- timeText (ex: "2pm", "14:30", "5 PM")
+- dayText (examples: "tomorrow", "Monday", "January 4", "next Friday")
+- timeText (examples: "2pm", "2:30", "5 PM", "14:00")
 
-If anything is missing, set intent="book" and ask exactly ONE short question to get the missing info.
+IMPORTANT:
+- If the message starts with "[Already collected: ...]", those fields are DONE. Do not ask for them again.
+- Only populate booking fields with NEW information from the customer's latest message.
+- If customer says something like "I want a haircut tomorrow at 3pm", extract ALL of that.
 
-Output format (JSON only):
+Output format (JSON only, no other text):
 {
   "intent": "faq" | "book" | "reschedule" | "cancel" | "unknown",
-  "reply": "short sentence to say to the customer",
+  "reply": "your response to the customer (keep it short and natural)",
   "booking": {
     "name": "",
     "service": "",
@@ -118,10 +111,25 @@ Output format (JSON only):
   } | null
 }
 
-Business info:
-${JSON.stringify(businessProfile)}
+Examples:
 
-Conversation so far:
+Customer: "I'd like to book a haircut"
+Output:
+{
+  "intent": "book",
+  "reply": "Great! What's your name?",
+  "booking": { "name": "", "service": "Haircut", "dayText": "", "timeText": "" }
+}
+
+Customer: "[Already collected: service: Haircut, name: John]\nCustomer just said: tomorrow at 2pm"
+Output:
+{
+  "intent": "book",
+  "reply": "Perfect! I have you down for a haircut tomorrow at 2pm.",
+  "booking": { "name": "", "service": "", "dayText": "tomorrow", "timeText": "2pm" }
+}
+
+Conversation history:
 ${(memory || []).join("\n")}
 `.trim();
 }
@@ -151,7 +159,7 @@ async function callModel({
           max_tokens: maxTokens,
           temperature,
         },
-        { signal } // OpenAI SDK supports AbortController signal in recent versions
+        { signal }
       );
     },
     timeoutMs
@@ -162,19 +170,17 @@ async function callModel({
   const parsed = AIResponseSchema.safeParse(raw);
 
   if (!parsed.success) {
+    console.log("⚠️ AI parsing failed:", parsed.error);
     return safeAIResponse({
       intent: "unknown",
-      reply: "Sorry — I didn’t catch that. Can you say that again?",
+      reply: "Sorry — I didn't catch that. Can you say that again?",
       booking: null,
     });
   }
 
   const out = parsed.data;
 
-  // Normalize booking: if not booking intent, keep booking null to simplify routing
   if (out.intent !== "book") out.booking = null;
-
-  // Ensure reply is not empty
   if (!out.reply || !out.reply.trim()) out.reply = "Okay.";
 
   return out;
@@ -193,11 +199,9 @@ export async function receptionistReply({ businessProfile, customerMessage, memo
     });
   } catch (e) {
     console.log("❌ AI error:", e?.message || e);
-
-    // Return a safe response that won't crash Twilio routes
     return safeAIResponse({
       intent: "unknown",
-      reply: "Sorry — I’m having trouble right now. Please try again.",
+      reply: "Sorry — I'm having trouble right now. Please try again.",
       booking: null,
     });
   }
@@ -205,7 +209,6 @@ export async function receptionistReply({ businessProfile, customerMessage, memo
 
 export async function receptionistVoiceReply({ businessProfile, customerMessage, memory }) {
   try {
-    // Slightly shorter for voice (faster + less ramble)
     return await callModel({
       businessProfile,
       customerMessage,
@@ -216,10 +219,9 @@ export async function receptionistVoiceReply({ businessProfile, customerMessage,
     });
   } catch (e) {
     console.log("❌ AI voice error:", e?.message || e);
-
     return safeAIResponse({
       intent: "unknown",
-      reply: "Sorry — I’m having trouble right now. Please try again.",
+      reply: "Sorry — I'm having trouble right now. Please try again.",
       booking: null,
     });
   }
