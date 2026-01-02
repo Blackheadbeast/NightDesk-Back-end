@@ -120,7 +120,7 @@ Customer: "I want a haircut tomorrow at 3pm"
   "booking": { "name": "", "service": "Haircut", "dayText": "tomorrow", "timeText": "3pm" }
 }
 
-Customer: "[Already collected: service: Haircut, dayText: tomorrow, timeText: 3pm]\nCustomer just said: John"
+Customer: "[Already collected: service: Haircut, dayText: tomorrow, timeText: 3pm]\\nCustomer just said: John"
 {
   "intent": "book",
   "reply": "Got it John! You're all set for a haircut tomorrow at 3pm. Sound good?",
@@ -154,7 +154,7 @@ async function callModel({
     async (signal) => {
       return await openai.chat.completions.create(
         {
-          model: "gpt-4o-mini", // Fast and cheap
+          model: "gpt-4o-mini",
           messages: [
             { role: "system", content: system },
             { role: "user", content: customerMessage || "" },
@@ -189,78 +189,6 @@ async function callModel({
   return out;
 }
 
-export async function receptionistVoiceReply({ businessProfile, customerMessage, memory }) {
-  try {
-    return await callModel({
-      businessProfile,
-      customerMessage,
-      memory,
-      maxTokens: 120,
-      temperature: 0.2, // Lower = more consistent
-      timeoutMs: 7000,
-    });
-  } catch (e) {
-    console.log("❌ AI voice error:", e?.message || e);
-    return safeAIResponse({
-      intent: "unknown",
-      reply: "Sorry, could you say that again?",
-      booking: null,
-    });
-  }
-}
-
-async function callModel({
-  businessProfile,
-  customerMessage,
-  memory,
-  maxTokens = 140,
-  temperature = 0.2,
-  timeoutMs = 9000,
-}) {
-  const openai = getClient();
-
-  const system = buildSystemPrompt(businessProfile, memory);
-
-  const resp = await withTimeout(
-    async (signal) => {
-      return await openai.chat.completions.create(
-        {
-          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: customerMessage || "" },
-          ],
-          response_format: { type: "json_object" },
-          max_tokens: maxTokens,
-          temperature,
-        },
-        { signal }
-      );
-    },
-    timeoutMs
-  );
-
-  const content = resp?.choices?.[0]?.message?.content || "";
-  const raw = safeJsonParse(content);
-  const parsed = AIResponseSchema.safeParse(raw);
-
-  if (!parsed.success) {
-    console.log("⚠️ AI parsing failed:", parsed.error);
-    return safeAIResponse({
-      intent: "unknown",
-      reply: "Sorry — I didn't catch that. Can you say that again?",
-      booking: null,
-    });
-  }
-
-  const out = parsed.data;
-
-  if (out.intent !== "book") out.booking = null;
-  if (!out.reply || !out.reply.trim()) out.reply = "Okay.";
-
-  return out;
-}
-
 // ---- Public API ----
 export async function receptionistReply({ businessProfile, customerMessage, memory }) {
   try {
@@ -289,14 +217,14 @@ export async function receptionistVoiceReply({ businessProfile, customerMessage,
       customerMessage,
       memory,
       maxTokens: 120,
-      temperature: 0.15,
-      timeoutMs: 8500,
+      temperature: 0.2,
+      timeoutMs: 7000,
     });
   } catch (e) {
     console.log("❌ AI voice error:", e?.message || e);
     return safeAIResponse({
       intent: "unknown",
-      reply: "Sorry — I'm having trouble right now. Please try again.",
+      reply: "Sorry, could you say that again?",
       booking: null,
     });
   }
