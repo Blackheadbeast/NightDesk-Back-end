@@ -234,16 +234,27 @@ router.post("/webhook/voice/continue", async (req, res) => {
       contextMessage = `[Already collected: ${collectedFields.join(', ')}]\nCustomer just said: ${speech}`;
     }
 
-    // Call AI
-    const ai = await receptionistVoiceReply({
-      businessProfile: {
-        businessName: "NightDesk Demo",
-        hours: "Mon–Sat 10am–7pm",
-        services: ["Haircut", "Beard Trim", "Haircut & Beard"],
-      },
-      customerMessage: contextMessage,
-      memory,
-    });
+   // Call AI with better error handling
+console.log(`🤖 Calling AI with: "${contextMessage}"`);
+let ai;
+try {
+  ai = await receptionistVoiceReply({
+    businessProfile: {
+      businessName: "NightDesk Demo",
+      hours: "Mon–Sat 10am–7pm",
+      services: ["Haircut", "Beard Trim", "Haircut & Beard"],
+    },
+    customerMessage: contextMessage,
+    memory,
+  });
+  console.log(`✅ AI responded:`, ai);
+} catch (aiError) {
+  console.error(`❌ AI call failed:`, aiError);
+  res.type("text/xml").send(
+    voiceHangup("Sorry, I'm having trouble right now. Please try calling back in a moment.")
+  );
+  return;
+}
 
     console.log(`🤖 AI response: ${ai.reply}`);
     console.log(`🤖 AI booking data:`, ai.booking);

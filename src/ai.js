@@ -218,7 +218,7 @@ export async function receptionistVoiceReply({ businessProfile, customerMessage,
       memory,
       maxTokens: 120,
       temperature: 0.2,
-      timeoutMs: 7000,
+      timeoutMs: 12000, // Increased from 7000 to 12000 (12 seconds)
     });
   } catch (e) {
     console.log("❌ AI voice error:", e?.message || e);
