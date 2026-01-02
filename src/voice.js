@@ -5,22 +5,12 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
   const VoiceResponse = twilio.twiml.VoiceResponse;
   const vr = new VoiceResponse();
 
-  // Use Google's best neural voice - MUCH more natural
-  const voiceConfig = {
-    voice: "Google.en-US-Neural2-F", // Natural female voice
-    // OR use: "Google.en-US-Neural2-J" for male voice
-  };
-
   if (sayText) {
-    // Add prosody for faster, more natural speech
-    const enhancedText = `<prosody rate="110%">${sayText}</prosody>`;
-    vr.say(
-      {
-        ...voiceConfig,
-        // Use SSML for better control
-      },
-      enhancedText
-    );
+    // Just use the voice parameter directly
+    vr.say({
+      voice: "Polly.Joanna",
+      language: "en-US"
+    }, sayText);
   }
 
   const actionUrl = gatherAction?.startsWith("http")
@@ -33,14 +23,14 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     method: "POST",
     speechTimeout: "auto",
     language: "en-US",
-    speechModel: "phone_call",
-    enhanced: true,
-    // Shorter timeout = faster responses
     timeout: 3,
   });
 
   if (gatherPrompt) {
-    gather.say(voiceConfig, gatherPrompt);
+    gather.say({
+      voice: "Polly.Joanna",
+      language: "en-US"
+    }, gatherPrompt);
   }
 
   return vr.toString();
@@ -50,13 +40,11 @@ export function voiceHangup(text) {
   const VoiceResponse = twilio.twiml.VoiceResponse;
   const vr = new VoiceResponse();
   
-  const voiceConfig = {
-    voice: "Google.en-US-Neural2-F",
-  };
-  
   if (text) {
-    const enhancedText = `<prosody rate="110%">${text}</prosody>`;
-    vr.say(voiceConfig, enhancedText);
+    vr.say({
+      voice: "Polly.Joanna",
+      language: "en-US"
+    }, text);
   }
   
   vr.hangup();
