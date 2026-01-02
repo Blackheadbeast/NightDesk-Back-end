@@ -23,7 +23,7 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     method: "POST",
     speechTimeout: "auto",
     language: "en-US",
-    timeout: 2, // Faster response (was 3)
+    timeout: 5,  // Increased from 2 to 5 seconds
     speechModel: "numbers_and_commands", // Better for booking info
   });
 
