@@ -6,9 +6,8 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
   const vr = new VoiceResponse();
 
   if (sayText) {
-    // Just use the voice parameter directly
     vr.say({
-      voice: "Polly.Joanna",
+      voice: "alice",  // Twilio's clearest voice
       language: "en-US"
     }, sayText);
   }
@@ -28,7 +27,7 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
 
   if (gatherPrompt) {
     gather.say({
-      voice: "Polly.Joanna",
+      voice: "alice",
       language: "en-US"
     }, gatherPrompt);
   }
@@ -42,7 +41,7 @@ export function voiceHangup(text) {
   
   if (text) {
     vr.say({
-      voice: "Polly.Joanna",
+      voice: "alice",
       language: "en-US"
     }, text);
   }
