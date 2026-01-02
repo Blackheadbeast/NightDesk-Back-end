@@ -73,36 +73,36 @@ function buildSystemPrompt(businessProfile, memory) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
   return `
-You are an AI receptionist for ${businessProfile.businessName}.
+You are a friendly receptionist for ${businessProfile.businessName}.
 
 CRITICAL RULES:
-1. If you see "[Already collected: ...]" in the customer's message, DO NOT ask for that information again.
-2. Only ask for ONE missing piece of information at a time.
-3. Be conversational and natural, not robotic.
-4. Keep responses SHORT (1-2 sentences max).
-5. Extract booking info from the customer's words, even if they don't say it perfectly.
+1. If you see "[Already collected: ...]" - DO NOT ask for that info again
+2. Ask for ONE missing thing at a time
+3. Be warm, friendly, and conversational
+4. Keep responses SHORT (1 sentence max for voice calls)
+5. Extract ALL info from customer's message at once if they give multiple details
 
 Business info:
 - Services: ${businessProfile.services.join(", ")}
 - Hours: ${businessProfile.hours}
-- Location: ${businessProfile.location}
 - Timezone: ${tz}
 
-Booking requirements:
+What you need to book:
 - name (customer's name)
-- service (one of: "Haircut", "Beard trim", "Haircut+Beard")
-- dayText (examples: "tomorrow", "Monday", "January 4", "next Friday")
-- timeText (examples: "2pm", "2:30", "5 PM", "14:00")
+- service (${businessProfile.services.join(" or ")})
+- dayText (examples: "tomorrow", "Monday", "January 10")
+- timeText (examples: "3pm", "2:30", "5 PM")
 
 IMPORTANT:
-- If the message starts with "[Already collected: ...]", those fields are DONE. Do not ask for them again.
-- Only populate booking fields with NEW information from the customer's latest message.
-- If customer says something like "I want a haircut tomorrow at 3pm", extract ALL of that.
+- If the customer gives you EVERYTHING in one message, extract it ALL
+- Example: "I want a haircut tomorrow at 3pm, my name is John" → Extract ALL of that
+- Only ask for what's MISSING from [Already collected]
+- Be conversational and natural
 
 Output format (JSON only, no other text):
 {
   "intent": "faq" | "book" | "reschedule" | "cancel" | "unknown",
-  "reply": "your response to the customer (keep it short and natural)",
+  "reply": "your short, friendly response",
   "booking": {
     "name": "",
     "service": "",
@@ -113,25 +113,100 @@ Output format (JSON only, no other text):
 
 Examples:
 
-Customer: "I'd like to book a haircut"
-Output:
+Customer: "I want a haircut tomorrow at 3pm"
 {
   "intent": "book",
-  "reply": "Great! What's your name?",
-  "booking": { "name": "", "service": "Haircut", "dayText": "", "timeText": "" }
+  "reply": "Perfect! What's your name?",
+  "booking": { "name": "", "service": "Haircut", "dayText": "tomorrow", "timeText": "3pm" }
 }
 
-Customer: "[Already collected: service: Haircut, name: John]\nCustomer just said: tomorrow at 2pm"
-Output:
+Customer: "[Already collected: service: Haircut, dayText: tomorrow, timeText: 3pm]\nCustomer just said: John"
 {
   "intent": "book",
-  "reply": "Perfect! I have you down for a haircut tomorrow at 2pm.",
-  "booking": { "name": "", "service": "", "dayText": "tomorrow", "timeText": "2pm" }
+  "reply": "Got it John! You're all set for a haircut tomorrow at 3pm. Sound good?",
+  "booking": { "name": "John", "service": "", "dayText": "", "timeText": "" }
+}
+
+Customer: "I'm Mike, I need a haircut on Friday at 2pm"
+{
+  "intent": "book",
+  "reply": "Awesome Mike! I've got you down for a haircut Friday at 2pm. Does that work?",
+  "booking": { "name": "Mike", "service": "Haircut", "dayText": "Friday", "timeText": "2pm" }
 }
 
 Conversation history:
 ${(memory || []).join("\n")}
 `.trim();
+}
+
+async function callModel({
+  businessProfile,
+  customerMessage,
+  memory,
+  maxTokens = 150,
+  temperature = 0.3,
+  timeoutMs = 8000,
+}) {
+  const openai = getClient();
+  const system = buildSystemPrompt(businessProfile, memory);
+
+  const resp = await withTimeout(
+    async (signal) => {
+      return await openai.chat.completions.create(
+        {
+          model: "gpt-4o-mini", // Fast and cheap
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: customerMessage || "" },
+          ],
+          response_format: { type: "json_object" },
+          max_tokens: maxTokens,
+          temperature,
+        },
+        { signal }
+      );
+    },
+    timeoutMs
+  );
+
+  const content = resp?.choices?.[0]?.message?.content || "";
+  const raw = safeJsonParse(content);
+  const parsed = AIResponseSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    console.log("⚠️ AI parsing failed:", parsed.error);
+    return safeAIResponse({
+      intent: "unknown",
+      reply: "Sorry, could you repeat that?",
+      booking: null,
+    });
+  }
+
+  const out = parsed.data;
+  if (out.intent !== "book") out.booking = null;
+  if (!out.reply || !out.reply.trim()) out.reply = "Okay.";
+
+  return out;
+}
+
+export async function receptionistVoiceReply({ businessProfile, customerMessage, memory }) {
+  try {
+    return await callModel({
+      businessProfile,
+      customerMessage,
+      memory,
+      maxTokens: 120,
+      temperature: 0.2, // Lower = more consistent
+      timeoutMs: 7000,
+    });
+  } catch (e) {
+    console.log("❌ AI voice error:", e?.message || e);
+    return safeAIResponse({
+      intent: "unknown",
+      reply: "Sorry, could you say that again?",
+      booking: null,
+    });
+  }
 }
 
 async function callModel({

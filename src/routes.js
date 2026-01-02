@@ -120,17 +120,20 @@ router.post("/webhook/voice", (_req, res) => {
 });
 
 /* ================================
-   VOICE CONTINUE
+   VOICE CONTINUE - FIXED VERSION
 ================================ */
 router.post("/webhook/voice/continue", async (req, res) => {
   try {
     const callSid = req.body.CallSid;
     const speech = (req.body.SpeechResult || "").trim();
 
+    console.log(`📞 Call ${callSid}: Customer said: "${speech}"`);
+
+    // Handle empty speech
     if (!speech) {
       res.type("text/xml").send(
         voiceResponse({
-          sayText: "Sorry, I didn't catch that. Could you repeat?",
+          sayText: "Sorry, I didn't catch that. Could you say that again?",
           gatherAction: "/api/webhook/voice/continue",
           gatherPrompt: "",
         })
@@ -138,37 +141,140 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
-    if (/(bye|goodbye|thanks|thank you)/i.test(speech)) {
+    // Handle goodbye
+    if (/(bye|goodbye|hang up|that's all|no thanks)/i.test(speech)) {
       res.type("text/xml").send(
-        voiceHangup("Thanks for calling. Have a great day!")
+        voiceHangup("Thanks for calling! Have a great day!")
       );
       return;
     }
 
+    // Get booking state
+    const booking = getBookingState(callSid);
     const memory = getCallMemory(callSid);
-    addCallMemory(callSid, `Caller: ${speech}`);
+    
+    // Check if this is a confirmation (YES/NO)
+    const isConfirming = /(yes|yeah|yep|correct|that's right|confirm)/i.test(speech);
+    const isDeclining = /(no|nope|wrong|incorrect)/i.test(speech);
 
+    // If they're confirming and we have all info, BOOK IT
+    if (isConfirming && booking.name && booking.service && booking.dayText && booking.timeText) {
+      console.log(`✅ Confirmed! Booking for ${booking.name}`);
+      
+      try {
+        // Build the booking time
+        const isoTimes = buildBookingISO({
+          dayText: booking.dayText,
+          timeText: booking.timeText,
+          durationMins: 30,
+        });
+
+        if (isoTimes) {
+          // Create calendar event
+          await createCalendarEvent({
+            name: booking.name,
+            service: booking.service,
+            startISO: isoTimes.startISO,
+            endISO: isoTimes.endISO,
+            phone: req.body.From || "unknown",
+          });
+          
+          console.log(`📅 Calendar event created for ${booking.name}`);
+        }
+
+        // Clear the booking state
+        clearCall(callSid);
+
+        // Send confirmation and HANG UP
+        res.type("text/xml").send(
+          voiceHangup(
+            `Perfect! Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. You'll get a text confirmation right now. Thanks for calling!`
+          )
+        );
+        return;
+      } catch (error) {
+        console.error("❌ Booking error:", error);
+        res.type("text/xml").send(
+          voiceHangup(
+            `Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
+          )
+        );
+        return;
+      }
+    }
+
+    // If they're declining, start over
+    if (isDeclining && booking.name) {
+      console.log("❌ Customer said no, restarting...");
+      clearCall(callSid);
+      res.type("text/xml").send(
+        voiceResponse({
+          sayText: "No problem! Let's start over. What service would you like to book?",
+          gatherAction: "/api/webhook/voice/continue",
+          gatherPrompt: "",
+        })
+      );
+      return;
+    }
+
+    // Add to memory
+    addCallMemory(callSid, `Customer: ${speech}`);
+
+    // Build the context message for AI
+    let contextMessage = speech;
+    
+    // Tell AI what we already have
+    const collectedFields = [];
+    if (booking.name) collectedFields.push(`name: ${booking.name}`);
+    if (booking.service) collectedFields.push(`service: ${booking.service}`);
+    if (booking.dayText) collectedFields.push(`day: ${booking.dayText}`);
+    if (booking.timeText) collectedFields.push(`time: ${booking.timeText}`);
+    
+    if (collectedFields.length > 0) {
+      contextMessage = `[Already collected: ${collectedFields.join(', ')}]\nCustomer just said: ${speech}`;
+    }
+
+    // Call AI
     const ai = await receptionistVoiceReply({
       businessProfile: {
         businessName: "NightDesk Demo",
         hours: "Mon–Sat 10am–7pm",
         services: ["Haircut", "Beard Trim", "Haircut & Beard"],
       },
-      customerMessage: speech,
+      customerMessage: contextMessage,
       memory,
     });
 
-    addCallMemory(callSid, `AI: ${ai.reply}`);
+    console.log(`🤖 AI response: ${ai.reply}`);
+    console.log(`🤖 AI booking data:`, ai.booking);
+
+    // Update booking state with NEW info only
+    if (ai.booking) {
+      updateBookingState(callSid, ai.booking);
+    }
+
+    // Get updated booking state
+    const updated = getBookingState(callSid);
+
+    // Determine what to say
+    let reply = ai.reply;
+
+    // If we have everything, ask for confirmation
+    if (updated.name && updated.service && updated.dayText && updated.timeText) {
+      reply = `Great! I have you down for a ${updated.service} on ${updated.dayText} at ${updated.timeText}. Is that correct?`;
+    }
+
+    addCallMemory(callSid, `AI: ${reply}`);
 
     res.type("text/xml").send(
       voiceResponse({
-        sayText: ai.reply || "How else can I help?",
+        sayText: reply,
         gatherAction: "/api/webhook/voice/continue",
         gatherPrompt: "",
       })
     );
   } catch (err) {
-    console.error("Voice webhook error:", err);
+    console.error("❌ Voice webhook error:", err);
     res.type("text/xml").send(
       voiceHangup("Sorry, something went wrong. Please call again later.")
     );

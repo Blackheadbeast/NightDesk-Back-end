@@ -1,36 +1,26 @@
 import twilio from "twilio";
 
-/**
- * ✅ Better voice options:
- * 
- * Option 1: Use Polly voices (more natural than alice)
- * - Polly.Joanna (US female, conversational)
- * - Polly.Matthew (US male)
- * - Polly.Amy (UK female)
- * 
- * Option 2: Use Google voices (even better)
- * - Google.en-US-Neural2-F (female, very natural)
- * - Google.en-US-Neural2-A (male, very natural)
- * 
- * Recommendation: Use Google Neural2 voices for best quality
- */
-
 export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
   const BASE_URL = process.env.BASE_URL;
-
   const VoiceResponse = twilio.twiml.VoiceResponse;
   const vr = new VoiceResponse();
 
-  // Use Google's Neural2 voice for much more natural sound
+  // Use Google's best neural voice - MUCH more natural
   const voiceConfig = {
     voice: "Google.en-US-Neural2-F", // Natural female voice
-    // Alternatives:
-    // voice: "Google.en-US-Neural2-A"  // Natural male voice
-    // voice: "Polly.Joanna"            // Good fallback if Google not enabled
+    // OR use: "Google.en-US-Neural2-J" for male voice
   };
 
   if (sayText) {
-    vr.say(voiceConfig, sayText);
+    // Add prosody for faster, more natural speech
+    const enhancedText = `<prosody rate="110%">${sayText}</prosody>`;
+    vr.say(
+      {
+        ...voiceConfig,
+        // Use SSML for better control
+      },
+      enhancedText
+    );
   }
 
   const actionUrl = gatherAction?.startsWith("http")
@@ -43,9 +33,10 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     method: "POST",
     speechTimeout: "auto",
     language: "en-US",
-    // Add hints for better speech recognition
-    speechModel: "phone_call", // Optimized for phone calls
-    enhanced: true, // Use enhanced speech recognition
+    speechModel: "phone_call",
+    enhanced: true,
+    // Shorter timeout = faster responses
+    timeout: 3,
   });
 
   if (gatherPrompt) {
@@ -63,7 +54,11 @@ export function voiceHangup(text) {
     voice: "Google.en-US-Neural2-F",
   };
   
-  if (text) vr.say(voiceConfig, text);
+  if (text) {
+    const enhancedText = `<prosody rate="110%">${text}</prosody>`;
+    vr.say(voiceConfig, enhancedText);
+  }
+  
   vr.hangup();
   return vr.toString();
 }
