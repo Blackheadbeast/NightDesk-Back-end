@@ -6,9 +6,9 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
   const vr = new VoiceResponse();
 
   if (sayText) {
-    // Use Polly.Salli - more natural than alice
+    // Try Google Neural2 voice first
     vr.say({
-      voice: "Polly.Salli",
+      voice: "Google.en-US-Neural2-F",
       language: "en-US"
     }, sayText);
   }
@@ -23,13 +23,13 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     method: "POST",
     speechTimeout: "auto",
     language: "en-US",
-    timeout: 5,  // Increased from 2 to 5 seconds
-    speechModel: "numbers_and_commands", // Better for booking info
+    timeout: 5,
+    speechModel: "phone_call",
   });
 
   if (gatherPrompt) {
     gather.say({
-      voice: "Polly.Salli",
+      voice: "Google.en-US-Neural2-F",
       language: "en-US"
     }, gatherPrompt);
   }
@@ -43,7 +43,7 @@ export function voiceHangup(text) {
   
   if (text) {
     vr.say({
-      voice: "Polly.Salli",
+      voice: "Google.en-US-Neural2-F",
       language: "en-US"
     }, text);
   }
