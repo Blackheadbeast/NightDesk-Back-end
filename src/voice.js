@@ -6,8 +6,9 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
   const vr = new VoiceResponse();
 
   if (sayText) {
+    // Use Polly.Salli - more natural than alice
     vr.say({
-      voice: "alice",  // Twilio's clearest voice
+      voice: "Polly.Salli",
       language: "en-US"
     }, sayText);
   }
@@ -22,12 +23,13 @@ export function voiceResponse({ sayText, gatherAction, gatherPrompt }) {
     method: "POST",
     speechTimeout: "auto",
     language: "en-US",
-    timeout: 3,
+    timeout: 2, // Faster response (was 3)
+    speechModel: "numbers_and_commands", // Better for booking info
   });
 
   if (gatherPrompt) {
     gather.say({
-      voice: "alice",
+      voice: "Polly.Salli",
       language: "en-US"
     }, gatherPrompt);
   }
@@ -41,7 +43,7 @@ export function voiceHangup(text) {
   
   if (text) {
     vr.say({
-      voice: "alice",
+      voice: "Polly.Salli",
       language: "en-US"
     }, text);
   }

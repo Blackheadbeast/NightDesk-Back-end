@@ -17,7 +17,7 @@ function parseTimeText(timeText) {
   // returns {hour, minute} or null
   const t = clean(timeText);
 
-  // 17:30 or 17:00
+  // 17:30 or 17:00 (24-hour format)
   let m = t.match(/\b(\d{1,2}):(\d{2})\b/);
   if (m) {
     const hour = Number(m[1]);
@@ -25,19 +25,51 @@ function parseTimeText(timeText) {
     if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) return { hour, minute };
   }
 
-  // 5pm / 5 pm / 12am / 12 am
-  m = t.match(/\b(\d{1,2})\s*(am|pm)\b/);
+  // 5pm / 5 pm / 12am / 12 am (FIXED VERSION)
+  m = t.match(/\b(\d{1,2})\s*(am|pm)\b/i);
   if (m) {
     let hour = Number(m[1]);
-    const ampm = m[2];
+    const ampm = m[2].toLowerCase();
+    
     if (hour < 1 || hour > 12) return null;
-    if (ampm === "am") hour = hour === 12 ? 0 : hour;
-    if (ampm === "pm") hour = hour === 12 ? 12 : hour + 12;
+    
+    // Convert to 24-hour format
+    if (ampm === "am") {
+      hour = hour === 12 ? 0 : hour; // 12am = 0, 1am = 1, etc.
+    } else { // pm
+      hour = hour === 12 ? 12 : hour + 12; // 12pm = 12, 1pm = 13, etc.
+    }
+    
     return { hour, minute: 0 };
   }
 
-  // "5" (last resort) -> assume 5pm? (dangerous)
-  // We'll avoid guessing; return null so we ask again.
+  // 5 o'clock / 5 oclock
+  m = t.match(/\b(\d{1,2})\s*o\s*clock\b/i);
+  if (m) {
+    let hour = Number(m[1]);
+    // Assume PM for business hours (9-12 = AM, 1-8 = PM)
+    if (hour >= 1 && hour <= 8) hour += 12; // 1-8 becomes 13-20 (1pm-8pm)
+    if (hour >= 9 && hour <= 12) hour = hour; // 9-12 stays as is (9am-12pm)
+    return { hour, minute: 0 };
+  }
+
+  // Just a number like "5" or "8"
+  m = t.match(/\b(\d{1,2})\b/);
+  if (m) {
+    let hour = Number(m[1]);
+    if (hour < 1 || hour > 12) return null;
+    
+    // Smart default: assume PM for typical business hours
+    // If someone says "8", assume 8pm (20:00)
+    // If someone says "10", assume 10am
+    if (hour >= 1 && hour <= 8) {
+      hour += 12; // 1-8 becomes 1pm-8pm
+    }
+    // 9-12 stays as morning
+    
+    return { hour, minute: 0 };
+  }
+
   return null;
 }
 
