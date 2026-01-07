@@ -107,7 +107,8 @@ IMPORTANT:
 - Example: "I want a haircut tomorrow at 3pm, my name is John" → Extract ALL of that
 - Only ask for what's MISSING from [Already collected]
 - Be conversational and natural
-- When you have name, service, dayText, and timeText, say you're checking availability
+- Only mention checking availability AFTER you have collected name, service, day, and time
+- Until then, just acknowledge what they said and ask for the next missing piece
 - ALWAYS return booking object even if only filling ONE field - DO NOT return null
 
 Output format (JSON only, no other text):
