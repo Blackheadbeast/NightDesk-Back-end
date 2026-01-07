@@ -288,14 +288,24 @@ router.post("/webhook/voice/continue", async (req, res) => {
     // Get updated booking state
     const updated = getBookingState(callSid);
 
-    // Determine what to say
-    let reply = ai.reply;
+  // Determine what to say
+let reply = ai.reply;
 
-    // If we have everything, ask for confirmation
-    if (updated.name && updated.service && updated.dayText && updated.timeText) {
-      reply = `Great! I have you down for a ${updated.service} on ${updated.dayText} at ${updated.timeText}. Is that correct?`;
-    }
-
+// Only ask for confirmation when we have ALL required info
+if (updated.name && updated.service && updated.dayText && updated.timeText) {
+  reply = `Great! I have you down for a ${updated.service} on ${updated.dayText} at ${updated.timeText}. Is that correct?`;
+} else {
+  // Ask for missing info
+  if (!updated.name) {
+    reply = "Great! What's your name?";
+  } else if (!updated.service) {
+    reply = "Perfect! What service would you like: Haircut, Beard Trim, or Haircut & Beard?";
+  } else if (!updated.dayText) {
+    reply = "What day works best for you?";
+  } else if (!updated.timeText) {
+    reply = `What time on ${updated.dayText}?`;
+  }
+}
     addCallMemory(callSid, `AI: ${reply}`);
 
     res.type("text/xml").send(
