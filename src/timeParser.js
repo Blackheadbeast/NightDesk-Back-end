@@ -2,11 +2,19 @@ import { DateTime } from "luxon";
 
 // Helpers
 function clean(s) {
-  return (s || "")
+  let out = (s || "")
     .toLowerCase()
+    // keep ":" for times, but remove punctuation into spaces
     .replace(/[\.,]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  // ✅ Normalize "p m" -> "pm", "a m" -> "am" (fixes "p.m." / "a.m.")
+  out = out
+    .replace(/\b([ap])\s+m\b/g, "$1m") // "p m" -> "pm"
+    .replace(/\b([ap])m\b/g, "$1m");   // keep consistent
+
+  return out;
 }
 
 function stripOrdinals(s) {
@@ -14,17 +22,13 @@ function stripOrdinals(s) {
 }
 
 function to24Hour(hour, ampm) {
-  let h = Number(hour);
+  const h = Number(hour);
   const p = String(ampm || "").toLowerCase();
 
   if (h < 1 || h > 12) return null;
 
-  if (p === "am") {
-    return h === 12 ? 0 : h; // 12am -> 0
-  }
-  if (p === "pm") {
-    return h === 12 ? 12 : h + 12; // 12pm -> 12, 1pm -> 13
-  }
+  if (p === "am") return h === 12 ? 0 : h;       // 12am -> 0
+  if (p === "pm") return h === 12 ? 12 : h + 12; // 12pm -> 12, 1pm -> 13
 
   return null;
 }
@@ -64,9 +68,8 @@ function parseTimeText(timeText) {
     let hour = Number(m[1]);
     if (hour < 1 || hour > 12) return null;
 
-    // Assume PM for 1-8, assume AM for 9-11, and 12 = noon-ish (keep 12)
+    // Smart default
     if (hour >= 1 && hour <= 8) hour += 12; // 1pm-8pm
-    // 9-12 stay as-is
     return { hour, minute: 0 };
   }
 
@@ -76,8 +79,8 @@ function parseTimeText(timeText) {
     let hour = Number(m[1]);
     if (hour < 1 || hour > 12) return null;
 
-    // Smart default: assume PM for 1-8, AM for 9-12
-    if (hour >= 1 && hour <= 8) hour += 12; // 1pm-8pm
+    // Smart default: PM for 1-8, AM for 9-12
+    if (hour >= 1 && hour <= 8) hour += 12;
     return { hour, minute: 0 };
   }
 
@@ -91,7 +94,6 @@ function nextWeekday(base, weekday) {
 }
 
 function parseDayText(dayText, tz) {
-  // returns a DateTime (date only) or null
   let d = clean(dayText);
   d = stripOrdinals(d);
 
@@ -101,7 +103,6 @@ function parseDayText(dayText, tz) {
   if (!d || d === "today") return today;
   if (d === "tomorrow") return today.plus({ days: 1 });
 
-  // next monday / monday
   const weekdays = {
     monday: 1, mon: 1,
     tuesday: 2, tue: 2, tues: 2,
@@ -112,14 +113,12 @@ function parseDayText(dayText, tz) {
     sunday: 7, sun: 7,
   };
 
-  // "next monday"
   let m = d.match(/\bnext\s+(monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat|sunday|sun)\b/);
   if (m) {
     const wd = weekdays[m[1]];
     return nextWeekday(today, wd);
   }
 
-  // plain weekday "monday"
   m = d.match(/\b(monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat|sunday|sun)\b/);
   if (m) {
     const wd = weekdays[m[1]];
@@ -127,32 +126,25 @@ function parseDayText(dayText, tz) {
     return today.plus({ days: delta });
   }
 
-  // ISO date 2026-01-04
   const iso = DateTime.fromISO(d, { zone: tz });
   if (iso.isValid) return iso.startOf("day");
 
-  // numeric dates: 1/4 or 01/04 (assume US M/D)
   const fmtMDY = ["M/d", "MM/dd", "M/d/yy", "MM/dd/yy", "M/d/yyyy", "MM/dd/yyyy"];
   for (const f of fmtMDY) {
     const dt = DateTime.fromFormat(d, f, { zone: tz });
     if (dt.isValid) {
       let candidate = dt.startOf("day");
-      if (!d.match(/\b\d{4}\b/) && candidate < today) {
-        candidate = candidate.plus({ years: 1 });
-      }
+      if (!d.match(/\b\d{4}\b/) && candidate < today) candidate = candidate.plus({ years: 1 });
       return candidate;
     }
   }
 
-  // month name: "january 4", "jan 4"
   const fmtMonth = ["LLLL d", "LLL d", "LLLL d yyyy", "LLL d yyyy"];
   for (const f of fmtMonth) {
     const dt = DateTime.fromFormat(d, f, { zone: tz });
     if (dt.isValid) {
       let candidate = dt.startOf("day");
-      if (!d.match(/\b\d{4}\b/) && candidate < today) {
-        candidate = candidate.plus({ years: 1 });
-      }
+      if (!d.match(/\b\d{4}\b/) && candidate < today) candidate = candidate.plus({ years: 1 });
       return candidate;
     }
   }
@@ -160,12 +152,6 @@ function parseDayText(dayText, tz) {
   return null;
 }
 
-/**
- * Parse date and time strings into a JavaScript Date object
- * @param {string} dayText
- * @param {string} timeText
- * @returns {Date}
- */
 export function parseDateTime(dayText, timeText) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
@@ -177,7 +163,6 @@ export function parseDateTime(dayText, timeText) {
   }
 
   const dateTime = date.set({ hour: time.hour, minute: time.minute });
-
   if (!dateTime.isValid) {
     throw new Error(`Invalid date/time combination: dayText="${dayText}" timeText="${timeText}"`);
   }
@@ -185,9 +170,6 @@ export function parseDateTime(dayText, timeText) {
   return dateTime.toJSDate();
 }
 
-/**
- * Build ISO strings for booking
- */
 export function buildBookingISO({ dayText, timeText, durationMins }) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
@@ -197,7 +179,6 @@ export function buildBookingISO({ dayText, timeText, durationMins }) {
   if (!date || !time) return null;
 
   const start = date.set({ hour: time.hour, minute: time.minute });
-
   if (!start.isValid) return null;
 
   const end = start.plus({ minutes: Number(durationMins || 30) });
