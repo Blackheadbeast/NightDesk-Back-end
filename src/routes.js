@@ -6,7 +6,7 @@ import { getMemory, addToMemory } from "./store.js";
 import { getCallMemory, addCallMemory, getBookingState, updateBookingState, clearCall } from "./callStore.js";
 import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
 import { buildBookingISO } from "./timeParser.js";
-import { createCalendarEvent } from "./calendar.js";
+import calendarService from "./calendar.js"; // CHANGED: Import the singleton instance
 
 console.log("🔥 routes.js loaded");
 
@@ -74,15 +74,26 @@ router.post("/webhook/sms", async (req, res) => {
         });
 
         if (isoTimes) {
-          await createCalendarEvent({
-            name: merged.name,
-            service: merged.service,
-            startISO: isoTimes.startISO,
-            endISO: isoTimes.endISO,
-            phone: from,
-          });
+          // CHANGED: Use new calendar service
+          const startTime = new Date(isoTimes.startISO);
+          const endTime = new Date(isoTimes.endISO);
           
-          reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}. Check your email for confirmation!`;
+          const bookingResult = await calendarService.bookAppointment(
+            startTime,
+            endTime,
+            {
+              name: merged.name,
+              phone: from,
+              email: "",
+              notes: `Service: ${merged.service}`,
+            }
+          );
+
+          if (bookingResult.success) {
+            reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}. Check your email for confirmation!`;
+          } else {
+            reply = `✅ Your ${merged.service} is noted for ${merged.dayText} at ${merged.timeText}. We'll confirm via text shortly.`;
+          }
         } else {
           reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}.`;
         }
@@ -170,16 +181,26 @@ router.post("/webhook/voice/continue", async (req, res) => {
         });
 
         if (isoTimes) {
-          // Create calendar event
-          await createCalendarEvent({
-            name: booking.name,
-            service: booking.service,
-            startISO: isoTimes.startISO,
-            endISO: isoTimes.endISO,
-            phone: req.body.From || "unknown",
-          });
+          // CHANGED: Use new calendar service
+          const startTime = new Date(isoTimes.startISO);
+          const endTime = new Date(isoTimes.endISO);
           
-          console.log(`📅 Calendar event created for ${booking.name}`);
+          const bookingResult = await calendarService.bookAppointment(
+            startTime,
+            endTime,
+            {
+              name: booking.name,
+              phone: req.body.From || "unknown",
+              email: "",
+              notes: `Service: ${booking.service}`,
+            }
+          );
+          
+          if (bookingResult.success) {
+            console.log(`📅 Calendar event created for ${booking.name}`);
+          } else {
+            console.warn(`⚠️ Calendar booking failed: ${bookingResult.message}`);
+          }
         }
 
         // Clear the booking state
@@ -234,27 +255,27 @@ router.post("/webhook/voice/continue", async (req, res) => {
       contextMessage = `[Already collected: ${collectedFields.join(', ')}]\nCustomer just said: ${speech}`;
     }
 
-   // Call AI with better error handling
-console.log(`🤖 Calling AI with: "${contextMessage}"`);
-let ai;
-try {
-  ai = await receptionistVoiceReply({
-    businessProfile: {
-      businessName: "NightDesk Demo",
-      hours: "Mon–Sat 10am–7pm",
-      services: ["Haircut", "Beard Trim", "Haircut & Beard"],
-    },
-    customerMessage: contextMessage,
-    memory,
-  });
-  console.log(`✅ AI responded:`, ai);
-} catch (aiError) {
-  console.error(`❌ AI call failed:`, aiError);
-  res.type("text/xml").send(
-    voiceHangup("Sorry, I'm having trouble right now. Please try calling back in a moment.")
-  );
-  return;
-}
+    // Call AI with better error handling
+    console.log(`🤖 Calling AI with: "${contextMessage}"`);
+    let ai;
+    try {
+      ai = await receptionistVoiceReply({
+        businessProfile: {
+          businessName: "NightDesk Demo",
+          hours: "Mon–Sat 10am–7pm",
+          services: ["Haircut", "Beard Trim", "Haircut & Beard"],
+        },
+        customerMessage: contextMessage,
+        memory,
+      });
+      console.log(`✅ AI responded:`, ai);
+    } catch (aiError) {
+      console.error(`❌ AI call failed:`, aiError);
+      res.type("text/xml").send(
+        voiceHangup("Sorry, I'm having trouble right now. Please try calling back in a moment.")
+      );
+      return;
+    }
 
     console.log(`🤖 AI response: ${ai.reply}`);
     console.log(`🤖 AI booking data:`, ai.booking);
