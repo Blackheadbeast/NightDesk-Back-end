@@ -46,7 +46,7 @@ export default {
   // Google Calendar Configuration
   googleCalendar: {
     clientEmail: process.env.GOOGLE_CLIENT_EMAIL,
-    privateKey: process.env.GOOGLE_PRIVATE_KEY,
+    privateKey: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
     timeZone: process.env.TIMEZONE || 'America/Denver',
   },
@@ -55,7 +55,10 @@ export default {
   businessHours: {
     start: parseInt(process.env.BUSINESS_HOURS_START) || 9, // 9 AM
     end: parseInt(process.env.BUSINESS_HOURS_END) || 17, // 5 PM
-    skipWeekends: process.env.SKIP_WEEKENDS === 'true' || true, // Skip weekends by default
+    skipWeekends: process.env.SKIP_WEEKENDS
+  ? process.env.SKIP_WEEKENDS === "true"
+  : true,
+ // Skip weekends by default
   },
 
   // Appointment Configuration

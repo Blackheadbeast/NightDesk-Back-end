@@ -3,14 +3,113 @@ import { twimlMessage } from "./twilio.js";
 import { voiceResponse, voiceHangup } from "./voice.js";
 import { receptionistReply, receptionistVoiceReply } from "./ai.js";
 import { getMemory, addToMemory } from "./store.js";
-import { getCallMemory, addCallMemory, getBookingState, updateBookingState, clearCall } from "./callStore.js";
-import { getSlots, mergeSlots, clearSlots } from "./slotStore.js";
+import {
+  getCallMemory,
+  addCallMemory,
+  getBookingState,
+  updateBookingState,
+  clearCall,
+} from "./callStore.js";
+import { mergeSlots, clearSlots } from "./slotStore.js";
 import { buildBookingISO } from "./timeParser.js";
-import calendarService from "./calendar.js"; // CHANGED: Import the singleton instance
+import calendarService from "./calendar.js";
+
+// ✅ OAuth helpers (personal Google Calendar demo)
+import { google } from "googleapis";
+import fs from "fs";
+import path from "path";
 
 console.log("🔥 routes.js loaded");
 
 const router = express.Router();
+
+const TOKEN_PATH = path.join(process.cwd(), "google_tokens.json");
+
+/* ================================
+   GOOGLE OAUTH (DEMO: PERSONAL CAL)
+   Visit /api/connect/google once
+================================ */
+router.get("/connect/google", (_req, res) => {
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  const url = oAuth2Client.generateAuthUrl({
+    access_type: "offline",
+    prompt: "consent",
+    scope: ["https://www.googleapis.com/auth/calendar"],
+  });
+
+  res.redirect(url);
+});
+
+router.get("/oauth2/callback", async (req, res) => {
+  try {
+    const code = req.query.code;
+    if (!code) return res.status(400).send("Missing code");
+
+    const oAuth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    const { tokens } = await oAuth2Client.getToken(code);
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+
+    // Make sure calendarService picks up tokens on next call
+    calendarService.reset?.();
+
+    res.send("✅ Google Calendar connected. You can close this tab.");
+  } catch (e) {
+    console.error("OAuth callback error:", e);
+    res.status(500).send("OAuth error. Check logs.");
+  }
+});
+
+/* ================================
+   RETELL (OPTIONAL) - SIMPLE API
+================================ */
+router.post("/retell/availability", async (req, res) => {
+  try {
+    const { startISO, endISO } = req.body;
+    if (!startISO || !endISO) {
+      return res.status(400).json({ error: "Missing startISO/endISO" });
+    }
+    const available = await calendarService.isSlotAvailable(
+      new Date(startISO),
+      new Date(endISO)
+    );
+    res.json({ available });
+  } catch (e) {
+    console.error("retell/availability error:", e);
+    res.status(500).json({ error: "availability_failed" });
+  }
+});
+
+router.post("/retell/book", async (req, res) => {
+  try {
+    const { startISO, endISO, name, phone, email, notes } = req.body;
+    if (!startISO || !endISO || !name || !phone) {
+      return res
+        .status(400)
+        .json({ error: "Missing startISO/endISO/name/phone" });
+    }
+
+    const result = await calendarService.bookAppointment(
+      new Date(startISO),
+      new Date(endISO),
+      { name, phone, email: email || "", notes: notes || "" }
+    );
+
+    res.json(result);
+  } catch (e) {
+    console.error("retell/book error:", e);
+    res.status(500).json({ error: "book_failed" });
+  }
+});
 
 /* ================================
    TEST ROUTE (KEEP FOREVER)
@@ -59,7 +158,6 @@ router.post("/webhook/sms", async (req, res) => {
       else if (!merged.dayText) reply = "What day works best?";
       else if (!merged.timeText) reply = `What time on ${merged.dayText}?`;
       else {
-        // All info collected → confirmation
         reply = `Thanks ${merged.name}! You're booking a ${merged.service} on ${merged.dayText} at ${merged.timeText}. Reply YES to confirm.`;
       }
     }
@@ -74,10 +172,9 @@ router.post("/webhook/sms", async (req, res) => {
         });
 
         if (isoTimes) {
-          // CHANGED: Use new calendar service
           const startTime = new Date(isoTimes.startISO);
           const endTime = new Date(isoTimes.endISO);
-          
+
           const bookingResult = await calendarService.bookAppointment(
             startTime,
             endTime,
@@ -90,23 +187,38 @@ router.post("/webhook/sms", async (req, res) => {
           );
 
           if (bookingResult.success) {
-            reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}. Check your email for confirmation!`;
+            reply = `✅ Booked: ${merged.service} on ${merged.dayText} at ${merged.timeText}.`;
           } else {
-            reply = `✅ Your ${merged.service} is noted for ${merged.dayText} at ${merged.timeText}. We'll confirm via text shortly.`;
+            // If taken, suggest alternatives (this is what you wanted)
+            if (bookingResult?.alternatives?.sameDay?.length) {
+              const opts = bookingResult.alternatives.sameDay
+                .slice(0, 3)
+                .map((x) => x.label)
+                .join(", ");
+              reply = `Sorry, that time is not available. We do have: ${opts}. Which one works?`;
+            } else if (bookingResult?.alternatives?.nextDays?.length) {
+              const d = bookingResult.alternatives.nextDays[0];
+              const opts = (d.slots || [])
+                .slice(0, 2)
+                .map((x) => x.label)
+                .join(", ");
+              reply = `That day is booked. Next available is ${d.dateLabel}${opts ? `: ${opts}` : ""}. Which works?`;
+            } else {
+              reply = `Sorry, that time is not available. What other time works?`;
+            }
           }
         } else {
-          reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}.`;
+          reply = `Got it — what time would you like instead?`;
         }
       } catch (calError) {
         console.error("Calendar creation error:", calError);
-        reply = `✅ Your ${merged.service} is booked for ${merged.dayText} at ${merged.timeText}.`;
+        reply = `Sorry — I'm having trouble booking right now. What time works best and I’ll confirm?`;
       }
-      
+
       clearSlots(from);
     }
 
     addToMemory(from, `AI: ${reply}`);
-
     res.type("text/xml").send(twimlMessage(reply));
   } catch (err) {
     console.error("SMS error:", err);
@@ -131,7 +243,7 @@ router.post("/webhook/voice", (_req, res) => {
 });
 
 /* ================================
-   VOICE CONTINUE - FIXED VERSION
+   VOICE CONTINUE
 ================================ */
 router.post("/webhook/voice/continue", async (req, res) => {
   try {
@@ -140,7 +252,6 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
     console.log(`📞 Call ${callSid}: Customer said: "${speech}"`);
 
-    // Handle empty speech
     if (!speech) {
       res.type("text/xml").send(
         voiceResponse({
@@ -152,28 +263,22 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
-    // Handle goodbye
     if (/(bye|goodbye|hang up|that's all|no thanks)/i.test(speech)) {
-      res.type("text/xml").send(
-        voiceHangup("Thanks for calling! Have a great day!")
-      );
+      res.type("text/xml").send(voiceHangup("Thanks for calling! Have a great day!"));
       return;
     }
 
-    // Get booking state
     const booking = getBookingState(callSid);
     const memory = getCallMemory(callSid);
-    
-    // Check if this is a confirmation (YES/NO)
+
     const isConfirming = /(yes|yeah|yep|correct|that's right|confirm)/i.test(speech);
     const isDeclining = /(no|nope|wrong|incorrect)/i.test(speech);
 
-    // If they're confirming and we have all info, BOOK IT
+    // ✅ If confirming and we have all info, BOOK IT
     if (isConfirming && booking.name && booking.service && booking.dayText && booking.timeText) {
       console.log(`✅ Confirmed! Booking for ${booking.name}`);
-      
+
       try {
-        // Build the booking time
         const isoTimes = buildBookingISO({
           dayText: booking.dayText,
           timeText: booking.timeText,
@@ -181,35 +286,26 @@ router.post("/webhook/voice/continue", async (req, res) => {
         });
 
         if (isoTimes) {
-          // CHANGED: Use new calendar service
           const startTime = new Date(isoTimes.startISO);
           const endTime = new Date(isoTimes.endISO);
-          
-          const bookingResult = await calendarService.bookAppointment(
-            startTime,
-            endTime,
-            {
-              name: booking.name,
-              phone: req.body.From || "unknown",
-              email: "",
-              notes: `Service: ${booking.service}`,
-            }
-          );
-          
-          if (bookingResult.success) {
-            console.log(`📅 Calendar event created for ${booking.name}`);
-          } else {
+
+          const bookingResult = await calendarService.bookAppointment(startTime, endTime, {
+            name: booking.name,
+            phone: req.body.From || "unknown",
+            email: "",
+            notes: `Service: ${booking.service}`,
+          });
+
+          if (!bookingResult.success) {
             console.warn(`⚠️ Calendar booking failed: ${bookingResult.message}`);
           }
         }
 
-        // Clear the booking state
         clearCall(callSid);
 
-        // Send confirmation and HANG UP
         res.type("text/xml").send(
           voiceHangup(
-            `Perfect! Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. You'll get a text confirmation right now. Thanks for calling!`
+            `Perfect! Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
           )
         );
         return;
@@ -217,14 +313,13 @@ router.post("/webhook/voice/continue", async (req, res) => {
         console.error("❌ Booking error:", error);
         res.type("text/xml").send(
           voiceHangup(
-            `Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
+            `Got it. I noted ${booking.service} for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
           )
         );
         return;
       }
     }
 
-    // If they're declining, start over
     if (isDeclining && booking.name) {
       console.log("❌ Customer said no, restarting...");
       clearCall(callSid);
@@ -238,26 +333,24 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
-    // Add to memory
     addCallMemory(callSid, `Customer: ${speech}`);
 
-    // Build the context message for AI
+    // Build context message
     let contextMessage = speech;
-    
-    // Tell AI what we already have
+
     const collectedFields = [];
     if (booking.name) collectedFields.push(`name: ${booking.name}`);
     if (booking.service) collectedFields.push(`service: ${booking.service}`);
     if (booking.dayText) collectedFields.push(`day: ${booking.dayText}`);
     if (booking.timeText) collectedFields.push(`time: ${booking.timeText}`);
-    
+
     if (collectedFields.length > 0) {
-      contextMessage = `[Already collected: ${collectedFields.join(', ')}]\nCustomer just said: ${speech}`;
+      contextMessage = `[Already collected: ${collectedFields.join(", ")}]\nCustomer just said: ${speech}`;
     }
 
-    // Call AI with better error handling
     console.log(`🤖 Calling AI with: "${contextMessage}"`);
     let ai;
+
     try {
       ai = await receptionistVoiceReply({
         businessProfile: {
@@ -268,7 +361,6 @@ router.post("/webhook/voice/continue", async (req, res) => {
         customerMessage: contextMessage,
         memory,
       });
-      console.log(`✅ AI responded:`, ai);
     } catch (aiError) {
       console.error(`❌ AI call failed:`, aiError);
       res.type("text/xml").send(
@@ -277,35 +369,22 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
-    console.log(`🤖 AI response: ${ai.reply}`);
-    console.log(`🤖 AI booking data:`, ai.booking);
+    if (ai.booking) updateBookingState(callSid, ai.booking);
 
-    // Update booking state with NEW info only
-    if (ai.booking) {
-      updateBookingState(callSid, ai.booking);
-    }
-
-    // Get updated booking state
     const updated = getBookingState(callSid);
 
-  // Determine what to say
-let reply = ai.reply;
+    let reply = ai.reply;
 
-// Only ask for confirmation when we have ALL required info
-if (updated.name && updated.service && updated.dayText && updated.timeText) {
-  reply = `Great! I have you down for a ${updated.service} on ${updated.dayText} at ${updated.timeText}. Is that correct?`;
-} else {
-  // Ask for missing info
-  if (!updated.name) {
-    reply = "Great! What's your name?";
-  } else if (!updated.service) {
-    reply = "Perfect! What service would you like: Haircut, Beard Trim, or Haircut & Beard?";
-  } else if (!updated.dayText) {
-    reply = "What day works best for you?";
-  } else if (!updated.timeText) {
-    reply = `What time on ${updated.dayText}?`;
-  }
-}
+    if (updated.name && updated.service && updated.dayText && updated.timeText) {
+      reply = `Great! I have you down for a ${updated.service} on ${updated.dayText} at ${updated.timeText}. Is that correct?`;
+    } else {
+      if (!updated.name) reply = "Great! What's your name?";
+      else if (!updated.service)
+        reply = "Perfect! What service would you like: Haircut, Beard Trim, or Haircut & Beard?";
+      else if (!updated.dayText) reply = "What day works best for you?";
+      else if (!updated.timeText) reply = `What time on ${updated.dayText}?`;
+    }
+
     addCallMemory(callSid, `AI: ${reply}`);
 
     res.type("text/xml").send(
@@ -324,3 +403,6 @@ if (updated.name && updated.service && updated.dayText && updated.timeText) {
 });
 
 export default router;
+/* ================================
+   END OF FILE
+================================ */
