@@ -158,6 +158,36 @@ function parseDayText(dayText, tz) {
   return null;
 }
 
+/**
+ * Parse date and time strings into a JavaScript Date object
+ * This is the function used by calendar.js and ai.js
+ * @param {string} dayText - "tomorrow", "Monday", "January 10", etc.
+ * @param {string} timeText - "3pm", "2:30", "5 PM", etc.
+ * @returns {Date} - JavaScript Date object
+ */
+export function parseDateTime(dayText, timeText) {
+  const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
+
+  const date = parseDayText(dayText, tz);
+  const time = parseTimeText(timeText);
+
+  if (!date || !time) {
+    throw new Error(`Unable to parse date/time: dayText="${dayText}" timeText="${timeText}"`);
+  }
+
+  const dateTime = date.set({ hour: time.hour, minute: time.minute }).setZone(tz);
+
+  if (!dateTime.isValid) {
+    throw new Error(`Invalid date/time combination: dayText="${dayText}" timeText="${timeText}"`);
+  }
+
+  // Convert Luxon DateTime to JavaScript Date
+  return dateTime.toJSDate();
+}
+
+/**
+ * Build ISO strings for booking (legacy function - kept for compatibility)
+ */
 export function buildBookingISO({ dayText, timeText, durationMins }) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
 
