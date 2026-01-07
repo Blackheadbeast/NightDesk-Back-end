@@ -13,60 +13,71 @@ function stripOrdinals(s) {
   return s.replace(/\b(\d{1,2})(st|nd|rd|th)\b/g, "$1");
 }
 
+function to24Hour(hour, ampm) {
+  let h = Number(hour);
+  const p = String(ampm || "").toLowerCase();
+
+  if (h < 1 || h > 12) return null;
+
+  if (p === "am") {
+    return h === 12 ? 0 : h; // 12am -> 0
+  }
+  if (p === "pm") {
+    return h === 12 ? 12 : h + 12; // 12pm -> 12, 1pm -> 13
+  }
+
+  return null;
+}
+
 function parseTimeText(timeText) {
   // returns {hour, minute} or null
   const t = clean(timeText);
 
-  // 17:30 or 17:00 (24-hour format)
-  let m = t.match(/\b(\d{1,2}):(\d{2})\b/);
+  // ✅ 3:30pm / 3:30 pm / 12:05am etc (AM/PM with minutes)
+  let m = t.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (m) {
+    const hour12 = Number(m[1]);
+    const minute = m[2] ? Number(m[2]) : 0;
+    const ampm = m[3].toLowerCase();
+
+    if (minute < 0 || minute > 59) return null;
+
+    const hour24 = to24Hour(hour12, ampm);
+    if (hour24 === null) return null;
+
+    return { hour: hour24, minute };
+  }
+
+  // ✅ 17:30 or 17:00 (24-hour format)
+  m = t.match(/\b(\d{1,2}):(\d{2})\b/);
   if (m) {
     const hour = Number(m[1]);
     const minute = Number(m[2]);
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) return { hour, minute };
-  }
-
-  // 5pm / 5 pm / 12am / 12 am (FIXED VERSION)
-  m = t.match(/\b(\d{1,2})\s*(am|pm)\b/i);
-  if (m) {
-    let hour = Number(m[1]);
-    const ampm = m[2].toLowerCase();
-    
-    if (hour < 1 || hour > 12) return null;
-    
-    // Convert to 24-hour format
-    if (ampm === "am") {
-      hour = hour === 12 ? 0 : hour; // 12am = 0, 1am = 1, etc.
-    } else { // pm
-      hour = hour === 12 ? 12 : hour + 12; // 12pm = 12, 1pm = 13, etc.
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return { hour, minute };
     }
-    
-    return { hour, minute: 0 };
   }
 
-  // 5 o'clock / 5 oclock
+  // ✅ 5 o'clock / 5 oclock
   m = t.match(/\b(\d{1,2})\s*o\s*clock\b/i);
   if (m) {
     let hour = Number(m[1]);
-    // Assume PM for business hours (9-12 = AM, 1-8 = PM)
-    if (hour >= 1 && hour <= 8) hour += 12; // 1-8 becomes 13-20 (1pm-8pm)
-    if (hour >= 9 && hour <= 12) hour = hour; // 9-12 stays as is (9am-12pm)
+    if (hour < 1 || hour > 12) return null;
+
+    // Assume PM for 1-8, assume AM for 9-11, and 12 = noon-ish (keep 12)
+    if (hour >= 1 && hour <= 8) hour += 12; // 1pm-8pm
+    // 9-12 stay as-is
     return { hour, minute: 0 };
   }
 
-  // Just a number like "5" or "8"
+  // ✅ Just a number like "5" or "8"
   m = t.match(/\b(\d{1,2})\b/);
   if (m) {
     let hour = Number(m[1]);
     if (hour < 1 || hour > 12) return null;
-    
-    // Smart default: assume PM for typical business hours
-    // If someone says "8", assume 8pm (20:00)
-    // If someone says "10", assume 10am
-    if (hour >= 1 && hour <= 8) {
-      hour += 12; // 1-8 becomes 1pm-8pm
-    }
-    // 9-12 stays as morning
-    
+
+    // Smart default: assume PM for 1-8, AM for 9-12
+    if (hour >= 1 && hour <= 8) hour += 12; // 1pm-8pm
     return { hour, minute: 0 };
   }
 
@@ -112,7 +123,6 @@ function parseDayText(dayText, tz) {
   m = d.match(/\b(monday|mon|tuesday|tue|tues|wednesday|wed|thursday|thu|thurs|friday|fri|saturday|sat|sunday|sun)\b/);
   if (m) {
     const wd = weekdays[m[1]];
-    // choose next occurrence INCLUDING today if later time is handled elsewhere; safest: if weekday==today, keep today
     const delta = (wd + 7 - today.weekday) % 7;
     return today.plus({ days: delta });
   }
@@ -122,19 +132,11 @@ function parseDayText(dayText, tz) {
   if (iso.isValid) return iso.startOf("day");
 
   // numeric dates: 1/4 or 01/04 (assume US M/D)
-  const fmtMDY = [
-    "M/d",
-    "MM/dd",
-    "M/d/yy",
-    "MM/dd/yy",
-    "M/d/yyyy",
-    "MM/dd/yyyy",
-  ];
+  const fmtMDY = ["M/d", "MM/dd", "M/d/yy", "MM/dd/yy", "M/d/yyyy", "MM/dd/yyyy"];
   for (const f of fmtMDY) {
     const dt = DateTime.fromFormat(d, f, { zone: tz });
     if (dt.isValid) {
       let candidate = dt.startOf("day");
-      // If no year was provided, Luxon may default current year; ensure future if already passed
       if (!d.match(/\b\d{4}\b/) && candidate < today) {
         candidate = candidate.plus({ years: 1 });
       }
@@ -160,10 +162,9 @@ function parseDayText(dayText, tz) {
 
 /**
  * Parse date and time strings into a JavaScript Date object
- * This is the function used by calendar.js and ai.js
- * @param {string} dayText - "tomorrow", "Monday", "January 10", etc.
- * @param {string} timeText - "3pm", "2:30", "5 PM", etc.
- * @returns {Date} - JavaScript Date object
+ * @param {string} dayText
+ * @param {string} timeText
+ * @returns {Date}
  */
 export function parseDateTime(dayText, timeText) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
@@ -175,18 +176,17 @@ export function parseDateTime(dayText, timeText) {
     throw new Error(`Unable to parse date/time: dayText="${dayText}" timeText="${timeText}"`);
   }
 
-  const dateTime = date.set({ hour: time.hour, minute: time.minute }).setZone(tz);
+  const dateTime = date.set({ hour: time.hour, minute: time.minute });
 
   if (!dateTime.isValid) {
     throw new Error(`Invalid date/time combination: dayText="${dayText}" timeText="${timeText}"`);
   }
 
-  // Convert Luxon DateTime to JavaScript Date
   return dateTime.toJSDate();
 }
 
 /**
- * Build ISO strings for booking (legacy function - kept for compatibility)
+ * Build ISO strings for booking
  */
 export function buildBookingISO({ dayText, timeText, durationMins }) {
   const tz = process.env.BUSINESS_TIMEZONE || "America/Denver";
@@ -196,7 +196,7 @@ export function buildBookingISO({ dayText, timeText, durationMins }) {
 
   if (!date || !time) return null;
 
-  const start = date.set({ hour: time.hour, minute: time.minute }).setZone(tz);
+  const start = date.set({ hour: time.hour, minute: time.minute });
 
   if (!start.isValid) return null;
 
