@@ -86,6 +86,8 @@ CRITICAL RULES:
 3. Be warm, friendly, and conversational
 4. Keep responses SHORT (1 sentence max for voice calls)
 5. Extract ALL info from customer's message at once if they give multiple details
+6. ALWAYS return a booking object when intent is "book" - NEVER return null
+7. Only fill in the NEW fields the customer just provided - leave other fields empty
 
 Business info:
 - Services: ${businessProfile.services.join(", ")}
@@ -106,6 +108,7 @@ IMPORTANT:
 - Only ask for what's MISSING from [Already collected]
 - Be conversational and natural
 - When you have name, service, dayText, and timeText, say you're checking availability
+- ALWAYS return booking object even if only filling ONE field - DO NOT return null
 
 Output format (JSON only, no other text):
 {
@@ -118,8 +121,10 @@ Output format (JSON only, no other text):
     "timeText": "",
     "phone": "",
     "email": ""
-  } | null
+  }
 }
+
+CRITICAL: Never return "booking": null when intent is "book". Always return the booking object with at least the new field filled.
 
 Examples:
 
@@ -135,6 +140,13 @@ Customer: "[Already collected: service: Haircut, dayText: tomorrow, timeText: 3p
   "intent": "book",
   "reply": "Great! Let me check if tomorrow at 3pm is available...",
   "booking": { "name": "John", "service": "", "dayText": "", "timeText": "", "phone": "", "email": "" }
+}
+
+Customer: "[Already collected: name: John Smith, day: tomorrow, time: 2:00 p.m.]\\nCustomer just said: Haircut"
+{
+  "intent": "book",
+  "reply": "Perfect! Let me check if tomorrow at 2:00 PM is available...",
+  "booking": { "name": "", "service": "Haircut", "dayText": "", "timeText": "", "phone": "", "email": "" }
 }
 
 Customer: "I'm Mike, I need a haircut on Friday at 2pm"
@@ -181,10 +193,15 @@ async function callModel({
 
   const content = resp?.choices?.[0]?.message?.content || "";
   const raw = safeJsonParse(content);
+  
+  // Add debug logging
+  console.log("🔍 Raw AI response:", content);
+  
   const parsed = AIResponseSchema.safeParse(raw);
 
   if (!parsed.success) {
     console.log("⚠️ AI parsing failed:", parsed.error);
+    console.log("⚠️ Raw content was:", content);
     return safeAIResponse({
       intent: "unknown",
       reply: "Sorry, could you repeat that?",
@@ -193,7 +210,22 @@ async function callModel({
   }
 
   const out = parsed.data;
-  if (out.intent !== "book") out.booking = null;
+  
+  // CHANGED: Keep booking object for "book" intent, even if empty
+  if (out.intent !== "book") {
+    out.booking = null;
+  } else if (!out.booking) {
+    // If booking is null but intent is book, create empty booking object
+    out.booking = {
+      name: "",
+      service: "",
+      dayText: "",
+      timeText: "",
+      phone: "",
+      email: ""
+    };
+  }
+  
   if (!out.reply || !out.reply.trim()) out.reply = "Okay.";
 
   return out;
