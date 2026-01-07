@@ -7,21 +7,35 @@ class CalendarService {
     this.initialized = false;
   }
 
-  async initialize() {
-    if (this.initialized) return;
+ async initialize() {
+  if (this.initialized) return;
 
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        client_email: config.googleCalendar.clientEmail,
-        private_key: config.googleCalendar.privateKey.replace(/\\n/g, '\n'),
-      },
-      scopes: ['https://www.googleapis.com/auth/calendar'],
-    });
+  let credentials;
 
-    this.calendar = google.calendar({ version: 'v3', auth });
-    this.initialized = true;
+  // Try to use full JSON first (more reliable)
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    try {
+      credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    } catch (error) {
+      console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', error);
+      throw new Error('Invalid service account JSON');
+    }
+  } else {
+    // Fallback to separate credentials
+    credentials = {
+      client_email: config.googleCalendar.clientEmail,
+      private_key: config.googleCalendar.privateKey?.replace(/\\n/g, '\n'),
+    };
   }
 
+  const auth = new google.auth.GoogleAuth({
+    credentials: credentials,
+    scopes: ['https://www.googleapis.com/auth/calendar'],
+  });
+
+  this.calendar = google.calendar({ version: 'v3', auth });
+  this.initialized = true;
+}
   /**
    * Check if a time slot is available
    * @param {Date} startTime - Start of requested slot
