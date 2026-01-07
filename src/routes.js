@@ -276,56 +276,20 @@ router.post("/webhook/voice/continue", async (req, res) => {
 
     // ✅ If confirming and we have all info, BOOK IT
     if (isConfirming && booking.name && booking.service && booking.dayText && booking.timeText) {
-      console.log(`✅ Confirmed! Booking for ${booking.name}`);
+  console.log(`✅ Confirmed! Booking for ${booking.name}`);
 
-      try {
-        const isoTimes = buildBookingISO({
-          dayText: booking.dayText,
-          timeText: booking.timeText,
-          durationMins: 30,
-        });
+  try {
+    const isoTimes = buildBookingISO({
+      dayText: booking.dayText,
+      timeText: booking.timeText,
+      durationMins: 30,
+    });
 
-        if (isoTimes) {
-          const startTime = new Date(isoTimes.startISO);
-          const endTime = new Date(isoTimes.endISO);
-
-          const bookingResult = await calendarService.bookAppointment(startTime, endTime, {
-            name: booking.name,
-            phone: req.body.From || "unknown",
-            email: "",
-            notes: `Service: ${booking.service}`,
-          });
-
-          if (!bookingResult.success) {
-            console.warn(`⚠️ Calendar booking failed: ${bookingResult.message}`);
-          }
-        }
-
-        clearCall(callSid);
-
-        res.type("text/xml").send(
-          voiceHangup(
-            `Perfect! Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
-          )
-        );
-        return;
-      } catch (error) {
-        console.error("❌ Booking error:", error);
-        res.type("text/xml").send(
-          voiceHangup(
-            `Got it. I noted ${booking.service} for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
-          )
-        );
-        return;
-      }
-    }
-
-    if (isDeclining && booking.name) {
-      console.log("❌ Customer said no, restarting...");
-      clearCall(callSid);
+    if (!isoTimes) {
+      // couldn't parse -> ask again
       res.type("text/xml").send(
         voiceResponse({
-          sayText: "No problem! Let's start over. What service would you like to book?",
+          sayText: `Sorry — what time would you like on ${booking.dayText}?`,
           gatherAction: "/api/webhook/voice/continue",
           gatherPrompt: "",
         })
@@ -333,7 +297,64 @@ router.post("/webhook/voice/continue", async (req, res) => {
       return;
     }
 
-    addCallMemory(callSid, `Customer: ${speech}`);
+    const startTime = new Date(isoTimes.startISO);
+    const endTime = new Date(isoTimes.endISO);
+
+    const bookingResult = await calendarService.bookAppointment(startTime, endTime, {
+      name: booking.name,
+      phone: req.body.From || "unknown",
+      email: "",
+      notes: `Service: ${booking.service}`,
+    });
+
+    // ✅ Only confirm + hangup if booking actually succeeded
+    if (bookingResult.success) {
+      clearCall(callSid);
+      res.type("text/xml").send(
+        voiceHangup(
+          `Perfect! Your ${booking.service} is booked for ${booking.dayText} at ${booking.timeText}. Thanks for calling!`
+        )
+      );
+      return;
+    }
+
+    // ❌ Slot not available -> offer alternatives, keep call alive
+    const alts = bookingResult?.alternatives;
+
+    let sayText = `Sorry, ${booking.timeText} is not available. `;
+
+    if (alts?.sameDay?.length) {
+      const opts = alts.sameDay.slice(0, 3).map((x) => x.label).join(", ");
+      sayText += `I can do: ${opts}. Which one works?`;
+    } else if (alts?.nextDays?.length) {
+      const d = alts.nextDays[0];
+      const opts = (d.slots || []).slice(0, 2).map((x) => x.label).join(", ");
+      sayText += `That day is booked. Next available is ${d.dateLabel}${opts ? `: ${opts}` : ""}. Which works?`;
+    } else {
+      sayText += `What other time works for you?`;
+    }
+
+    res.type("text/xml").send(
+      voiceResponse({
+        sayText,
+        gatherAction: "/api/webhook/voice/continue",
+        gatherPrompt: "",
+      })
+    );
+    return;
+  } catch (error) {
+    console.error("❌ Booking error:", error);
+    res.type("text/xml").send(
+      voiceResponse({
+        sayText: `Sorry — I'm having trouble booking right now. What time works best and I’ll confirm?`,
+        gatherAction: "/api/webhook/voice/continue",
+        gatherPrompt: "",
+      })
+    );
+    return;
+  }
+}
+
 
     // Build context message
     let contextMessage = speech;
