@@ -5,61 +5,59 @@ const router = express.Router();
 
 router.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Check availability
-// router.post("/retell/availability", async (req, res) => {
-//   try {
-//     const { startISO, durationMinutes = 60 } = req.body || {};
-//     if (!startISO) return res.status(400).json({ error: "Missing startISO" });
-
-//     const start = new Date(startISO);
-//     const end = new Date(start.getTime() + Number(durationMinutes) * 60 * 1000);
-
-//     const available = await calendarService.isSlotAvailable(start, end);
-
-//     return res.json({ available });
-//   } catch (e) {
-//     console.error("availability error:", e);
-//     return res.status(500).json({ error: "availability_failed" });
-//   }
-// });
+// Check availability (REAL)
 router.post("/retell/availability", async (req, res) => {
-  return res.json({ available: true });
+  try {
+    const { startISO, durationMinutes = 60 } = req.body || {};
+    if (!startISO) return res.status(400).json({ error: "Missing startISO" });
+
+    const start = new Date(startISO);
+    const end = new Date(start.getTime() + Number(durationMinutes) * 60 * 1000);
+
+    const available = await calendarService.isSlotAvailable(start, end);
+    return res.json({ available });
+  } catch (e) {
+    console.error("availability error:", e);
+    return res.status(500).json({ error: "availability_failed" });
+  }
 });
 
-// Book appointment (double-book safe)
-// router.post("/retell/book", async (req, res) => {
-//   try {
-//     const { startISO, durationMinutes = 60, name, phone, email = "", service = "" } = req.body || {};
-//     if (!startISO || !name || !phone) {
-//       return res.status(400).json({ error: "Missing startISO/name/phone" });
-//     }
+// Book appointment (REAL + double-book safe)
+router.post("/retell/book", async (req, res) => {
+  try {
+    const {
+      startISO,
+      durationMinutes = 60,
+      name,
+      phone = "",
+      email = "",
+      service = "",
+    } = req.body || {};
 
-//     const start = new Date(startISO);
-//     const end = new Date(start.getTime() + Number(durationMinutes) * 60 * 1000);
+    // phone should NOT be required (Retell may not provide it)
+    if (!startISO || !name) {
+      return res.status(400).json({ error: "Missing startISO/name" });
+    }
 
-//     // Final safety check (prevents double booking)
-//     const available = await calendarService.isSlotAvailable(start, end);
-//     if (!available) return res.status(409).json({ error: "slot_taken" });
+    const start = new Date(startISO);
+    const end = new Date(start.getTime() + Number(durationMinutes) * 60 * 1000);
 
-//     const result = await calendarService.bookAppointment(start, end, {
-//       name,
-//       phone,
-//       email,
-//       notes: service ? `Service: ${service}` : "",
-//     });
+    // Final safety check (prevents double booking)
+    const available = await calendarService.isSlotAvailable(start, end);
+    if (!available) return res.status(409).json({ error: "slot_taken" });
 
-//     return res.json({ ok: true, result });
-//   } catch (e) {
-//     console.error("book error:", e);
-//     return res.status(500).json({ error: "book_failed" });
-//   }
-// });
+    const result = await calendarService.bookAppointment(start, end, {
+      name,
+      phone,
+      email,
+      notes: service ? `Service: ${service}` : "",
+    });
 
-router.post("/retell/book", async (_req, res) => {
-  return res.json({ ok: true });
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error("book error:", e);
+    return res.status(500).json({ error: "book_failed" });
+  }
 });
 
 export default router;
-/* ================================
-   END OF FILE
-================================ */
