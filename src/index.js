@@ -1,7 +1,7 @@
 import "./config.js";
 import express from "express";
 import cors from "cors";
-import routes from "./routes.js";
+import retellRoutes from "./retellRoutes.js";
 
 const app = express();
 
@@ -9,14 +9,10 @@ app.use(cors());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-console.log("🔥 mounting routes");
-app.use("/api", routes);
+console.log("🔥 mounting retell routes");
+app.use("/api", retellRoutes);
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 app.listen(port, "0.0.0.0", () => {
   console.log("Listening on", port);
 });
