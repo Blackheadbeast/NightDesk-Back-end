@@ -1,5 +1,7 @@
 import express from "express";
 import calendarService from "./calendar.js";
+import { parseDateTime } from "./timeParser.js";
+import config from "./config.js";
 
 const router = express.Router();
 
@@ -72,14 +74,36 @@ router.post("/vapi/book", async (req, res) => {
       appointment_time
     } = req.body;
 
+    console.log("📞 VAPI booking request:", req.body);
+
     if (!customer_name || !service_type || !appointment_date || !appointment_time) {
-      return res.status(400).json({ success: false, error: "missing_fields" });
+      console.log("❌ Missing required fields");
+      return res.status(400).json({ 
+        success: false, 
+        error: "missing_fields",
+        message: "Missing required fields: customer_name, service_type, appointment_date, appointment_time"
+      });
     }
 
     // Build start/end time using your existing parser
     const startTime = parseDateTime(appointment_date, appointment_time);
     const duration = config.appointment.defaultDuration;
     const endTime = new Date(startTime.getTime() + duration * 60 * 1000);
+
+    console.log(`⏰ Checking availability: ${startTime.toISOString()} to ${endTime.toISOString()}`);
+
+    // Check if the slot is available
+    const available = await calendarService.isSlotAvailable(startTime, endTime);
+
+    if (!available) {
+      console.log("❌ Slot not available");
+      return res.json({ 
+        success: false, 
+        message: "That time slot is not available. Please choose another time."
+      });
+    }
+
+    console.log("✅ Slot is available, booking...");
 
     const result = await calendarService.bookAppointment(
       startTime,
@@ -93,16 +117,32 @@ router.post("/vapi/book", async (req, res) => {
     );
 
     if (!result.success) {
-      return res.status(409).json({ success: false });
+      console.log("❌ Booking failed:", result);
+      return res.json({ 
+        success: false,
+        message: result.message || "Failed to book appointment"
+      });
     }
 
-    return res.json({ success: true });
+    console.log("✅ Booking successful!");
+    return res.json({ 
+      success: true,
+      message: `Appointment booked for ${customer_name} on ${appointment_date} at ${appointment_time}`,
+      eventId: result.eventId
+    });
 
   } catch (err) {
     console.error("❌ VAPI booking error:", err);
-    return res.status(500).json({ success: false });
+    return res.status(500).json({ 
+      success: false, 
+      error: "booking_failed",
+      message: err.message || "An error occurred while booking"
+    });
   }
 });
 
 
 export default router;
+/* ================================
+   END OF FILE
+================================ */
