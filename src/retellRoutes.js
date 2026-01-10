@@ -1,11 +1,78 @@
 import express from "express";
+import { google } from "googleapis";
+import fs from "fs";
+import path from "path";
 import calendarService from "./calendar.js";
 import { parseDateTime } from "./timeParser.js";
 import config from "./config.js";
 
 const router = express.Router();
+const TOKEN_PATH = path.join(process.cwd(), "google_tokens.json");
 
+/* ================================
+   GOOGLE OAUTH (SETUP ROUTES)
+================================ */
+router.get("/connect/google", (_req, res) => {
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  const url = oAuth2Client.generateAuthUrl({
+    access_type: "offline",
+    prompt: "consent",
+    scope: ["https://www.googleapis.com/auth/calendar"],
+  });
+
+  res.redirect(url);
+});
+
+router.get("/oauth2/callback", async (req, res) => {
+  try {
+    const code = req.query.code;
+    if (!code) return res.status(400).send("Missing code");
+
+    const oAuth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    const { tokens } = await oAuth2Client.getToken(code);
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+
+    // Make sure calendarService picks up tokens on next call
+    calendarService.reset?.();
+
+    res.send("✅ Google Calendar connected successfully! You can close this tab and return to your app.");
+  } catch (e) {
+    console.error("OAuth callback error:", e);
+    res.status(500).send("OAuth error. Check server logs for details.");
+  }
+});
+
+/* ================================
+   HEALTH & STATUS
+================================ */
 router.get("/health", (_req, res) => res.json({ ok: true }));
+
+router.get("/status", (_req, res) => {
+  const hasTokens = fs.existsSync(TOKEN_PATH);
+  const tokens = hasTokens ? JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8")) : null;
+  
+  res.json({
+    status: "online",
+    googleCalendar: {
+      authenticated: hasTokens && !!tokens?.refresh_token,
+      setupUrl: hasTokens ? null : `${process.env.BASE_URL}/api/connect/google`
+    }
+  });
+});
+
+/* ================================
+   RETELL ROUTES
+================================ */
 
 // Check availability (REAL)
 router.post("/retell/availability", async (req, res) => {
@@ -62,9 +129,9 @@ router.post("/retell/book", async (req, res) => {
   }
 });
 
-// ================================
-// VAPI BOOKING ENDPOINT (FINAL)
-// ================================
+/* ================================
+   VAPI BOOKING ENDPOINT (FINAL)
+================================ */
 router.post("/vapi/book", async (req, res) => {
   try {
     const {
