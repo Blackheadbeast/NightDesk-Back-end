@@ -6,9 +6,9 @@
 //   const vr = new VoiceResponse();
 
 //   if (sayText) {
-//     // Try Google Neural2 voice first
+//     // Use Polly.Joanna - MUCH better than alice
 //     vr.say({
-//       voice: "Google.en-US-Neural2-F",
+//       voice: "Polly.Joanna",
 //       language: "en-US"
 //     }, sayText);
 //   }
@@ -24,12 +24,12 @@
 //     speechTimeout: "auto",
 //     language: "en-US",
 //     timeout: 5,
-//     speechModel: "phone_call",
+//     speechModel: "phone_call", // Better for natural conversation
 //   });
 
 //   if (gatherPrompt) {
 //     gather.say({
-//       voice: "Google.en-US-Neural2-F",
+//       voice: "Polly.Joanna",
 //       language: "en-US"
 //     }, gatherPrompt);
 //   }
@@ -43,7 +43,7 @@
   
 //   if (text) {
 //     vr.say({
-//       voice: "Google.en-US-Neural2-F",
+//       voice: "Polly.Joanna",
 //       language: "en-US"
 //     }, text);
 //   }

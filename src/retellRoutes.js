@@ -60,4 +60,49 @@ router.post("/retell/book", async (req, res) => {
   }
 });
 
+// ================================
+// VAPI BOOKING ENDPOINT (FINAL)
+// ================================
+router.post("/vapi/book", async (req, res) => {
+  try {
+    const {
+      customer_name,
+      service_type,
+      appointment_date,
+      appointment_time
+    } = req.body;
+
+    if (!customer_name || !service_type || !appointment_date || !appointment_time) {
+      return res.status(400).json({ success: false, error: "missing_fields" });
+    }
+
+    // Build start/end time using your existing parser
+    const startTime = parseDateTime(appointment_date, appointment_time);
+    const duration = config.appointment.defaultDuration;
+    const endTime = new Date(startTime.getTime() + duration * 60 * 1000);
+
+    const result = await calendarService.bookAppointment(
+      startTime,
+      endTime,
+      {
+        name: customer_name,
+        phone: "",
+        email: "",
+        notes: `Service: ${service_type}`
+      }
+    );
+
+    if (!result.success) {
+      return res.status(409).json({ success: false });
+    }
+
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error("❌ VAPI booking error:", err);
+    return res.status(500).json({ success: false });
+  }
+});
+
+
 export default router;
